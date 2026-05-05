@@ -178,13 +178,11 @@ fn set_base(base: &str, branch: Option<&str>, validate: bool) -> Result<()> {
         None => current_branch()?,
     };
 
-    if validate {
-        if !ref_exists(base) {
-            return Err(anyhow!(
-                "Base branch '{}' does not appear to be a valid ref",
-                base
-            ));
-        }
+    if validate && !ref_exists(base) {
+        return Err(anyhow!(
+            "Base branch '{}' does not appear to be a valid ref",
+            base
+        ));
     }
 
     let config_key = format!("branch.{}.base", target_branch);
@@ -245,22 +243,18 @@ where
     let mut depth = 1;
     let mut seen = vec![current.clone()];
 
-    loop {
-        if let Some(base) = get_base_fn(&current) {
-            if seen.contains(&base) {
-                let prefix = "    ".repeat(depth - 1);
-                lines.push(format!("{}└── {} {}", prefix.dimmed(), base.blue(), "(cycle detected)".red()));
-                break;
-            }
-
+    while let Some(base) = get_base_fn(&current) {
+        if seen.contains(&base) {
             let prefix = "    ".repeat(depth - 1);
-            lines.push(format!("{}└── {}", prefix.dimmed(), base.blue()));
-            seen.push(base.clone());
-            current = base;
-            depth += 1;
-        } else {
+            lines.push(format!("{}└── {} {}", prefix.dimmed(), base.blue(), "(cycle detected)".red()));
             break;
         }
+
+        let prefix = "    ".repeat(depth - 1);
+        lines.push(format!("{}└── {}", prefix.dimmed(), base.blue()));
+        seen.push(base.clone());
+        current = base;
+        depth += 1;
     }
 
     lines
@@ -449,7 +443,7 @@ fn rank_closest_bases(target: &str, candidates: &[&str]) -> Vec<String> {
                     .unwrap_or_default()
                     .trim()
                     .parse()
-                    .unwrap_or(std::usize::MAX);
+                    .unwrap_or(usize::MAX);
                 Some((cand.to_string(), dist))
             } else {
                 None
@@ -601,17 +595,17 @@ fn doctor(fix: bool, install_hook: bool) -> Result<()> {
     let mut broken_count = 0;
 
     for branch in branches {
-        if let Ok(base) = get_base(Some(branch)) {
-            if !ref_exists(&base) {
-                println!("⚠️  Branch '{}' points to missing base '{}'", branch.yellow(), base.red());
-                broken_count += 1;
+        if let Ok(base) = get_base(Some(branch))
+            && !ref_exists(&base)
+        {
+            println!("⚠️  Branch '{}' points to missing base '{}'", branch.yellow(), base.red());
+            broken_count += 1;
 
-                if fix {
-                    println!("   Attempting to auto-fix '{}'...", branch.yellow());
-                    match guess_base(Some(branch), "main,master,develop", true) {
-                        Ok(_) => println!("   ✅ Fixed '{}'", branch.green()),
-                        Err(e) => println!("   ❌ Failed to auto-fix: {}", e.to_string().red()),
-                    }
+            if fix {
+                println!("   Attempting to auto-fix '{}'...", branch.yellow());
+                match guess_base(Some(branch), "main,master,develop", true) {
+                    Ok(_) => println!("   ✅ Fixed '{}'", branch.green()),
+                    Err(e) => println!("   ❌ Failed to auto-fix: {}", e.to_string().red()),
                 }
             }
         }
@@ -722,9 +716,14 @@ mod tests {
 
         let lines = build_tree_lines("feature/my-branch", mock_bases);
         assert_eq!(lines.len(), 3);
-        assert_eq!(lines[0], "feature/my-branch");
-        assert_eq!(lines[1], "└── dev");
-        assert_eq!(lines[2], "    └── main");
+        // Strip ANSI codes for comparison
+        let strip = |s: &str| -> String {
+            let re = Regex::new(r"\x1b\[[0-9;]*m").unwrap();
+            re.replace_all(s, "").to_string()
+        };
+        assert_eq!(strip(&lines[0]), "feature/my-branch");
+        assert_eq!(strip(&lines[1]), "└── dev");
+        assert_eq!(strip(&lines[2]), "    └── main");
     }
 
     #[test]
@@ -740,9 +739,13 @@ mod tests {
 
         let lines = build_tree_lines("A", mock_bases);
         assert_eq!(lines.len(), 4);
-        assert_eq!(lines[0], "A");
-        assert_eq!(lines[1], "└── B");
-        assert_eq!(lines[2], "    └── C");
-        assert_eq!(lines[3], "        └── A (cycle detected)");
+        let strip = |s: &str| -> String {
+            let re = Regex::new(r"\x1b\[[0-9;]*m").unwrap();
+            re.replace_all(s, "").to_string()
+        };
+        assert_eq!(strip(&lines[0]), "A");
+        assert_eq!(strip(&lines[1]), "└── B");
+        assert_eq!(strip(&lines[2]), "    └── C");
+        assert_eq!(strip(&lines[3]), "        └── A (cycle detected)");
     }
 }
