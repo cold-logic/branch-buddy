@@ -15,7 +15,17 @@ Git does not naturally remember which branch another branch was created from—i
 
 ## Installation
 
-You can install Branch Buddy locally using Cargo:
+### Default Installation
+
+You can install the latest version of Branch Buddy directly from GitHub using Cargo:
+
+```bash
+cargo install --git https://github.com/cold-logic/branch-buddy
+```
+
+### Local Development
+
+If you want to install, build, or compile your own variant, you can clone the repository and install it locally:
 
 ```bash
 cargo install --path .
