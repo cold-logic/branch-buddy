@@ -1,7 +1,7 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use dialoguer::{theme::ColorfulTheme, FuzzySelect};
+use dialoguer::{FuzzySelect, theme::ColorfulTheme};
 use regex::Regex;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -53,9 +53,7 @@ enum Commands {
         fail_if_exists: bool,
     },
     /// Get the base branch for the specified branch (or current branch)
-    GetBase {
-        branch: Option<String>,
-    },
+    GetBase { branch: Option<String> },
     /// Set the base branch for a branch
     SetBase {
         /// The base branch to set
@@ -67,9 +65,7 @@ enum Commands {
         no_validate: bool,
     },
     /// Check if a branch has a base set (exits 0 if true, 1 otherwise)
-    HasBase {
-        branch: Option<String>,
-    },
+    HasBase { branch: Option<String> },
     /// Guess the base branch for a branch
     GuessBase {
         branch: Option<String>,
@@ -79,9 +75,7 @@ enum Commands {
         write: bool,
     },
     /// Show the branch ancestry tree
-    Tree {
-        branch: Option<String>,
-    },
+    Tree { branch: Option<String> },
     /// Install git hooks (post-checkout) to automatically track branches
     #[command(alias = "install")]
     InstallHooks,
@@ -246,7 +240,12 @@ where
     while let Some(base) = get_base_fn(&current) {
         if seen.contains(&base) {
             let prefix = "    ".repeat(depth - 1);
-            lines.push(format!("{}└── {} {}", prefix.dimmed(), base.blue(), "(cycle detected)".red()));
+            lines.push(format!(
+                "{}└── {} {}",
+                prefix.dimmed(),
+                base.blue(),
+                "(cycle detected)".red()
+            ));
             break;
         }
 
@@ -286,46 +285,50 @@ fn new_branch(
     fail_if_exists: bool,
 ) -> Result<()> {
     let mut create_at = "HEAD".to_string();
-    
+
     let base_branch = match base {
         Some(b) => {
             create_at = b.to_string();
             b.to_string()
-        },
-        None => {
-            match current_branch() {
-                Ok(b) => {
-                    create_at = b.clone();
-                    b
-                },
-                Err(e) => {
-                    if e.to_string().contains("detached HEAD") {
-                        println!("{} {}", "⚠️".yellow(), "Currently in detached HEAD. Resolving base branch...".yellow());
-                        
-                        let all_branches = get_all_local_branches();
-                        let candidates: Vec<&str> = all_branches.iter().map(|s| s.as_str()).collect();
-                        
-                        let ranked = rank_closest_bases("HEAD", &candidates);
-                        
-                        if ranked.is_empty() {
-                            return Err(anyhow!("Failed to find any local branches. Please specify one explicitly: `branch-buddy new <name> <base>`"));
-                        }
-                        
-                        let selection = FuzzySelect::with_theme(&ColorfulTheme::default())
-                            .with_prompt("Select base branch for metadata (closest match pre-selected)")
-                            .default(0)
-                            .items(&ranked)
-                            .interact()?;
-                            
-                        let base = ranked[selection].clone();
-                        println!("💾 Selected base: {}", base.blue());
-                        base
-                    } else {
-                        return Err(e);
+        }
+        None => match current_branch() {
+            Ok(b) => {
+                create_at = b.clone();
+                b
+            }
+            Err(e) => {
+                if e.to_string().contains("detached HEAD") {
+                    println!(
+                        "{} {}",
+                        "⚠️".yellow(),
+                        "Currently in detached HEAD. Resolving base branch...".yellow()
+                    );
+
+                    let all_branches = get_all_local_branches();
+                    let candidates: Vec<&str> = all_branches.iter().map(|s| s.as_str()).collect();
+
+                    let ranked = rank_closest_bases("HEAD", &candidates);
+
+                    if ranked.is_empty() {
+                        return Err(anyhow!(
+                            "Failed to find any local branches. Please specify one explicitly: `branch-buddy new <name> <base>`"
+                        ));
                     }
+
+                    let selection = FuzzySelect::with_theme(&ColorfulTheme::default())
+                        .with_prompt("Select base branch for metadata (closest match pre-selected)")
+                        .default(0)
+                        .items(&ranked)
+                        .interact()?;
+
+                    let base = ranked[selection].clone();
+                    println!("💾 Selected base: {}", base.blue());
+                    base
+                } else {
+                    return Err(e);
                 }
             }
-        }
+        },
     };
 
     // verify base
@@ -414,44 +417,50 @@ fn get_all_local_branches() -> Vec<String> {
 }
 
 fn rank_closest_bases(target: &str, candidates: &[&str]) -> Vec<String> {
-    let mut scored: Vec<(String, usize)> = candidates.iter().filter_map(|&cand| {
-        if cand == target {
-            return None;
-        }
-        if !ref_exists(cand) {
-            return None;
-        }
-
-        let output = Command::new("git")
-            .args(["merge-base", target, cand])
-            .output()
-            .unwrap_or_else(|_| std::process::Command::new("true").output().unwrap());
-
-        if output.status.success() {
-            let mb_sha = String::from_utf8(output.stdout).unwrap_or_default().trim().to_string();
-            if mb_sha.is_empty() {
+    let mut scored: Vec<(String, usize)> = candidates
+        .iter()
+        .filter_map(|&cand| {
+            if cand == target {
                 return None;
             }
-            
-            let d_out = Command::new("git")
-                .args(["rev-list", "--count", &format!("{}..{}", mb_sha, target)])
+            if !ref_exists(cand) {
+                return None;
+            }
+
+            let output = Command::new("git")
+                .args(["merge-base", target, cand])
                 .output()
                 .unwrap_or_else(|_| std::process::Command::new("true").output().unwrap());
-                
-            if d_out.status.success() {
-                let dist: usize = String::from_utf8(d_out.stdout)
+
+            if output.status.success() {
+                let mb_sha = String::from_utf8(output.stdout)
                     .unwrap_or_default()
                     .trim()
-                    .parse()
-                    .unwrap_or(usize::MAX);
-                Some((cand.to_string(), dist))
+                    .to_string();
+                if mb_sha.is_empty() {
+                    return None;
+                }
+
+                let d_out = Command::new("git")
+                    .args(["rev-list", "--count", &format!("{}..{}", mb_sha, target)])
+                    .output()
+                    .unwrap_or_else(|_| std::process::Command::new("true").output().unwrap());
+
+                if d_out.status.success() {
+                    let dist: usize = String::from_utf8(d_out.stdout)
+                        .unwrap_or_default()
+                        .trim()
+                        .parse()
+                        .unwrap_or(usize::MAX);
+                    Some((cand.to_string(), dist))
+                } else {
+                    None
+                }
             } else {
                 None
             }
-        } else {
-            None
-        }
-    }).collect();
+        })
+        .collect();
 
     scored.sort_by_key(|&(_, dist)| dist);
     scored.into_iter().map(|(cand, _)| cand).collect()
@@ -471,7 +480,11 @@ fn guess_base(branch: Option<&str>, candidates: &str, write: bool) -> Result<()>
         println!("🔮 Guessed base: {}", base.blue());
         if write {
             set_base(&base, Some(&target_branch), false)?;
-            println!("💾 Saved base {} for branch {}", base.blue(), target_branch.green());
+            println!(
+                "💾 Saved base {} for branch {}",
+                base.blue(),
+                target_branch.green()
+            );
         }
         Ok(())
     } else {
@@ -497,7 +510,7 @@ fn do_install_hook(enable_health_check: bool) -> Result<()> {
     }
 
     let hook_path = hooks_dir.join("post-checkout");
-    
+
     let health_check_snippet = if enable_health_check {
         r#"# If the current branch has a base, but that base branch was deleted, warn the user
 base=$(branch-buddy get-base "$curr" 2>/dev/null)
@@ -513,7 +526,8 @@ fi"#
 # fi"#
     };
 
-    let hook_content = format!(r#"#!/bin/bash
+    let hook_content = format!(
+        r#"#!/bin/bash
 # post-checkout
 
 # Flag 1 means a branch checkout (not a file checkout)
@@ -536,7 +550,9 @@ prev_branch=$(git rev-parse --abbrev-ref @{{-1}} 2>/dev/null)
 if [ -n "$prev_branch" ] && [ "$prev_branch" != "HEAD" ]; then
     branch-buddy set-base "$prev_branch" "$curr" >/dev/null 2>&1
 fi
-"#, health_check_snippet);
+"#,
+        health_check_snippet
+    );
 
     if hook_path.exists() {
         let content = std::fs::read_to_string(&hook_path)?;
@@ -546,7 +562,10 @@ fi
                 hook_path.display()
             ));
         } else {
-            println!("✅ branch-buddy post-checkout hook is {} installed.", "already".yellow());
+            println!(
+                "✅ branch-buddy post-checkout hook is {} installed.",
+                "already".yellow()
+            );
             return Ok(());
         }
     }
@@ -561,13 +580,23 @@ fi
         std::fs::set_permissions(&hook_path, perms)?;
     }
 
-    println!("🎉 {} post-checkout hook at {}", "Successfully installed".green(), hook_path.display());
-    
+    println!(
+        "🎉 {} post-checkout hook at {}",
+        "Successfully installed".green(),
+        hook_path.display()
+    );
+
     if !enable_health_check {
-        println!("\n💡 {}: You can also enable automatic health checks that warn you about broken base branch links.", "Tip".yellow().bold());
-        println!("Run `{}` to enable them!", "branch-buddy doctor --install-hook".cyan());
+        println!(
+            "\n💡 {}: You can also enable automatic health checks that warn you about broken base branch links.",
+            "Tip".yellow().bold()
+        );
+        println!(
+            "Run `{}` to enable them!",
+            "branch-buddy doctor --install-hook".cyan()
+        );
     }
-    
+
     Ok(())
 }
 
@@ -598,7 +627,11 @@ fn doctor(fix: bool, install_hook: bool) -> Result<()> {
         if let Ok(base) = get_base(Some(branch))
             && !ref_exists(&base)
         {
-            println!("⚠️  Branch '{}' points to missing base '{}'", branch.yellow(), base.red());
+            println!(
+                "⚠️  Branch '{}' points to missing base '{}'",
+                branch.yellow(),
+                base.red()
+            );
             broken_count += 1;
 
             if fix {
@@ -612,7 +645,10 @@ fn doctor(fix: bool, install_hook: bool) -> Result<()> {
     }
 
     if broken_count == 0 {
-        println!("🩺 Repository is perfectly healthy! All base branch links are {}.", "intact".green());
+        println!(
+            "🩺 Repository is perfectly healthy! All base branch links are {}.",
+            "intact".green()
+        );
     } else if !fix {
         println!(
             "\nFound {} broken link(s). Run `{}` to auto-heal them.",
@@ -620,7 +656,10 @@ fn doctor(fix: bool, install_hook: bool) -> Result<()> {
             "branch-buddy doctor --fix".cyan()
         );
     } else {
-        println!("\nDoctor finished repairing {} broken link(s).", broken_count.to_string().green().bold());
+        println!(
+            "\nDoctor finished repairing {} broken link(s).",
+            broken_count.to_string().green().bold()
+        );
     }
 
     Ok(())
