@@ -1046,7 +1046,9 @@ fn run_jj_output(args: &[&str]) -> Result<String> {
 }
 
 fn count_jj_revset(revset: &str) -> usize {
-    let output = Command::new("jj").args(["log", "-r", revset, "--no-graph"]).output();
+    let output = Command::new("jj")
+        .args(["log", "-r", revset, "--no-graph", "-T", "commit_id ++ \"\\n\""])
+        .output();
     match output {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
             .lines()
