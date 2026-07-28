@@ -478,6 +478,22 @@ fn print_tree_with_mode(branch: Option<&str>, no_legend: bool, mode: VcsMode) ->
     Ok(())
 }
 
+fn get_jj_trunk_name() -> String {
+    if let Ok(output) = Command::new("jj")
+        .args(["log", "-r", "trunk()", "--no-graph", "-T", "local_bookmarks"])
+        .output()
+        && output.status.success()
+    {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if let Some(first_bm) = stdout.split_whitespace().next()
+            && !first_bm.trim().is_empty()
+        {
+            return first_bm.trim().to_string();
+        }
+    }
+    "trunk()".to_string()
+}
+
 fn handle_log(
     branch: Option<&str>,
     stack: bool,
@@ -495,7 +511,7 @@ fn handle_log(
 
     let base = get_base(Some(&target)).unwrap_or_else(|_| match mode {
         VcsMode::Git => "main".to_string(),
-        VcsMode::Jj => "trunk()".to_string(),
+        VcsMode::Jj => get_jj_trunk_name(),
     });
 
     println!(
