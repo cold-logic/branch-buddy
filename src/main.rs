@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, anyhow};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::{Shell, generate};
 use colored::Colorize;
 use dialoguer::{FuzzySelect, theme::ColorfulTheme};
 use regex::Regex;
@@ -260,6 +261,13 @@ enum Commands {
         /// Run interactive wizard to prompt for configuration options
         #[arg(short = 'i', long)]
         interactive: bool,
+    },
+
+    /// Generate shell completion scripts
+    #[command(hide = true)]
+    Completions {
+        /// Shell to generate completions for
+        shell: Shell,
     },
 }
 
@@ -1514,6 +1522,10 @@ fn main() -> Result<()> {
             interactive,
         } => {
             handle_init(*global, *force, *interactive)?;
+        }
+        Commands::Completions { shell } => {
+            let mut cmd = Cli::command();
+            generate(*shell, &mut cmd, "branch-buddy", &mut std::io::stdout());
         }
     }
 

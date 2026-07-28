@@ -1,0 +1,363 @@
+#compdef branch-buddy
+
+autoload -U is-at-least
+
+_branch-buddy() {
+    typeset -A opt_args
+    typeset -a _arguments_options
+    local ret=1
+
+    if is-at-least 5.2; then
+        _arguments_options=(-s -S -C)
+    else
+        _arguments_options=(-s -C)
+    fi
+
+    local context curcontext="$curcontext" state line
+    _arguments "${_arguments_options[@]}" : \
+'--config=[Path to custom configuration file]:CONFIG:_files' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_branch-buddy_commands" \
+"*::: :->branch-buddy" \
+&& ret=0
+    case $state in
+    (branch-buddy)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:branch-buddy-command-$line[1]:"
+        case $line[1] in
+            (new)
+_arguments "${_arguments_options[@]}" : \
+'--base=[Base branch (defaults to current branch)]:BASE:_default' \
+'--type=[Optional prefix type (e.g., '\''feature'\'', '\''bugfix'\'')]:type:_default' \
+'--ticket=[Optional ticket ID (e.g., '\''ABC-123'\'')]:TICKET:_default' \
+'--config=[Path to custom configuration file]:CONFIG:_files' \
+'--dry-run[Perform a dry run without creating the branch]' \
+'--no-checkout[Create the branch but do not check it out]' \
+'--json[Output results as JSON]' \
+'--fail-if-exists[Fail if branch already exists instead of appending a numeric suffix]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':title -- Human-readable title for the branch:_default' \
+&& ret=0
+;;
+(get-base)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Path to custom configuration file]:CONFIG:_files' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::branch:_default' \
+&& ret=0
+;;
+(set-base)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Path to custom configuration file]:CONFIG:_files' \
+'--no-validate[Skip validating that the base is a valid ref]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':base -- The base branch to set:_default' \
+'::branch -- The branch to update (defaults to current branch):_default' \
+&& ret=0
+;;
+(has-base)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Path to custom configuration file]:CONFIG:_files' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::branch:_default' \
+&& ret=0
+;;
+(guess-base)
+_arguments "${_arguments_options[@]}" : \
+'--candidates=[]:CANDIDATES:_default' \
+'--config=[Path to custom configuration file]:CONFIG:_files' \
+'--write[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::branch:_default' \
+&& ret=0
+;;
+(tree)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Path to custom configuration file]:CONFIG:_files' \
+'--no-legend[Hide the branch tree legend at the bottom]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::branch:_default' \
+&& ret=0
+;;
+(install-hooks)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Path to custom configuration file]:CONFIG:_files' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(doctor)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Path to custom configuration file]:CONFIG:_files' \
+'--fix[Automatically attempt to fix broken links using guess-base]' \
+'--install-hook[Install the post-checkout git hook for automatic health checks]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(log)
+_arguments "${_arguments_options[@]}" : \
+'-n+[Limit number of commits displayed]:LIMIT:_default' \
+'--limit=[Limit number of commits displayed]:LIMIT:_default' \
+'--config=[Path to custom configuration file]:CONFIG:_files' \
+'--stack[Include commits across all parent base branches up to trunk()]' \
+'--stat[Show file diff statistics for each commit]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'::branch -- Target branch (defaults to current branch):_default' \
+&& ret=0
+;;
+(init)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Path to custom configuration file]:CONFIG:_files' \
+'--global[Create global configuration file at ~/.config/branchbuddy/config.toml]' \
+'-f[Overwrite existing configuration file if present]' \
+'--force[Overwrite existing configuration file if present]' \
+'-i[Run interactive wizard to prompt for configuration options]' \
+'--interactive[Run interactive wizard to prompt for configuration options]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(completions)
+_arguments "${_arguments_options[@]}" : \
+'--config=[Path to custom configuration file]:CONFIG:_files' \
+'-h[Print help]' \
+'--help[Print help]' \
+':shell -- Shell to generate completions for:(bash elvish fish powershell zsh)' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_branch-buddy__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:branch-buddy-help-command-$line[1]:"
+        case $line[1] in
+            (new)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(get-base)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(set-base)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(has-base)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(guess-base)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(tree)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(install-hooks)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(doctor)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(log)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(init)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(completions)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+}
+
+(( $+functions[_branch-buddy_commands] )) ||
+_branch-buddy_commands() {
+    local commands; commands=(
+'new:Create a new branch with a slugified name and set its base' \
+'get-base:Get the base branch for the specified branch (or current branch)' \
+'set-base:Set the base branch for a branch' \
+'has-base:Check if a branch has a base set (exits 0 if true, 1 otherwise)' \
+'guess-base:Guess the base branch for a branch' \
+'tree:Show the branch ancestry tree' \
+'install-hooks:Install git hooks (post-checkout) to automatically track branches' \
+'doctor:Check repository for broken base branch links and optionally fix them' \
+'log:Show focused commit log between branch and base (or stack)' \
+'init:Scaffold a new .branchbuddy.toml configuration file' \
+'completions:Generate shell completion scripts' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'branch-buddy commands' commands "$@"
+}
+(( $+functions[_branch-buddy__subcmd__completions_commands] )) ||
+_branch-buddy__subcmd__completions_commands() {
+    local commands; commands=()
+    _describe -t commands 'branch-buddy completions commands' commands "$@"
+}
+(( $+functions[_branch-buddy__subcmd__doctor_commands] )) ||
+_branch-buddy__subcmd__doctor_commands() {
+    local commands; commands=()
+    _describe -t commands 'branch-buddy doctor commands' commands "$@"
+}
+(( $+functions[_branch-buddy__subcmd__get-base_commands] )) ||
+_branch-buddy__subcmd__get-base_commands() {
+    local commands; commands=()
+    _describe -t commands 'branch-buddy get-base commands' commands "$@"
+}
+(( $+functions[_branch-buddy__subcmd__guess-base_commands] )) ||
+_branch-buddy__subcmd__guess-base_commands() {
+    local commands; commands=()
+    _describe -t commands 'branch-buddy guess-base commands' commands "$@"
+}
+(( $+functions[_branch-buddy__subcmd__has-base_commands] )) ||
+_branch-buddy__subcmd__has-base_commands() {
+    local commands; commands=()
+    _describe -t commands 'branch-buddy has-base commands' commands "$@"
+}
+(( $+functions[_branch-buddy__subcmd__help_commands] )) ||
+_branch-buddy__subcmd__help_commands() {
+    local commands; commands=(
+'new:Create a new branch with a slugified name and set its base' \
+'get-base:Get the base branch for the specified branch (or current branch)' \
+'set-base:Set the base branch for a branch' \
+'has-base:Check if a branch has a base set (exits 0 if true, 1 otherwise)' \
+'guess-base:Guess the base branch for a branch' \
+'tree:Show the branch ancestry tree' \
+'install-hooks:Install git hooks (post-checkout) to automatically track branches' \
+'doctor:Check repository for broken base branch links and optionally fix them' \
+'log:Show focused commit log between branch and base (or stack)' \
+'init:Scaffold a new .branchbuddy.toml configuration file' \
+'completions:Generate shell completion scripts' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'branch-buddy help commands' commands "$@"
+}
+(( $+functions[_branch-buddy__subcmd__help__subcmd__completions_commands] )) ||
+_branch-buddy__subcmd__help__subcmd__completions_commands() {
+    local commands; commands=()
+    _describe -t commands 'branch-buddy help completions commands' commands "$@"
+}
+(( $+functions[_branch-buddy__subcmd__help__subcmd__doctor_commands] )) ||
+_branch-buddy__subcmd__help__subcmd__doctor_commands() {
+    local commands; commands=()
+    _describe -t commands 'branch-buddy help doctor commands' commands "$@"
+}
+(( $+functions[_branch-buddy__subcmd__help__subcmd__get-base_commands] )) ||
+_branch-buddy__subcmd__help__subcmd__get-base_commands() {
+    local commands; commands=()
+    _describe -t commands 'branch-buddy help get-base commands' commands "$@"
+}
+(( $+functions[_branch-buddy__subcmd__help__subcmd__guess-base_commands] )) ||
+_branch-buddy__subcmd__help__subcmd__guess-base_commands() {
+    local commands; commands=()
+    _describe -t commands 'branch-buddy help guess-base commands' commands "$@"
+}
+(( $+functions[_branch-buddy__subcmd__help__subcmd__has-base_commands] )) ||
+_branch-buddy__subcmd__help__subcmd__has-base_commands() {
+    local commands; commands=()
+    _describe -t commands 'branch-buddy help has-base commands' commands "$@"
+}
+(( $+functions[_branch-buddy__subcmd__help__subcmd__help_commands] )) ||
+_branch-buddy__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'branch-buddy help help commands' commands "$@"
+}
+(( $+functions[_branch-buddy__subcmd__help__subcmd__init_commands] )) ||
+_branch-buddy__subcmd__help__subcmd__init_commands() {
+    local commands; commands=()
+    _describe -t commands 'branch-buddy help init commands' commands "$@"
+}
+(( $+functions[_branch-buddy__subcmd__help__subcmd__install-hooks_commands] )) ||
+_branch-buddy__subcmd__help__subcmd__install-hooks_commands() {
+    local commands; commands=()
+    _describe -t commands 'branch-buddy help install-hooks commands' commands "$@"
+}
+(( $+functions[_branch-buddy__subcmd__help__subcmd__log_commands] )) ||
+_branch-buddy__subcmd__help__subcmd__log_commands() {
+    local commands; commands=()
+    _describe -t commands 'branch-buddy help log commands' commands "$@"
+}
+(( $+functions[_branch-buddy__subcmd__help__subcmd__new_commands] )) ||
+_branch-buddy__subcmd__help__subcmd__new_commands() {
+    local commands; commands=()
+    _describe -t commands 'branch-buddy help new commands' commands "$@"
+}
+(( $+functions[_branch-buddy__subcmd__help__subcmd__set-base_commands] )) ||
+_branch-buddy__subcmd__help__subcmd__set-base_commands() {
+    local commands; commands=()
+    _describe -t commands 'branch-buddy help set-base commands' commands "$@"
+}
+(( $+functions[_branch-buddy__subcmd__help__subcmd__tree_commands] )) ||
+_branch-buddy__subcmd__help__subcmd__tree_commands() {
+    local commands; commands=()
+    _describe -t commands 'branch-buddy help tree commands' commands "$@"
+}
+(( $+functions[_branch-buddy__subcmd__init_commands] )) ||
+_branch-buddy__subcmd__init_commands() {
+    local commands; commands=()
+    _describe -t commands 'branch-buddy init commands' commands "$@"
+}
+(( $+functions[_branch-buddy__subcmd__install-hooks_commands] )) ||
+_branch-buddy__subcmd__install-hooks_commands() {
+    local commands; commands=()
+    _describe -t commands 'branch-buddy install-hooks commands' commands "$@"
+}
+(( $+functions[_branch-buddy__subcmd__log_commands] )) ||
+_branch-buddy__subcmd__log_commands() {
+    local commands; commands=()
+    _describe -t commands 'branch-buddy log commands' commands "$@"
+}
+(( $+functions[_branch-buddy__subcmd__new_commands] )) ||
+_branch-buddy__subcmd__new_commands() {
+    local commands; commands=()
+    _describe -t commands 'branch-buddy new commands' commands "$@"
+}
+(( $+functions[_branch-buddy__subcmd__set-base_commands] )) ||
+_branch-buddy__subcmd__set-base_commands() {
+    local commands; commands=()
+    _describe -t commands 'branch-buddy set-base commands' commands "$@"
+}
+(( $+functions[_branch-buddy__subcmd__tree_commands] )) ||
+_branch-buddy__subcmd__tree_commands() {
+    local commands; commands=()
+    _describe -t commands 'branch-buddy tree commands' commands "$@"
+}
+
+if [ "$funcstack[1]" = "_branch-buddy" ]; then
+    _branch-buddy "$@"
+else
+    compdef _branch-buddy branch-buddy
+fi
