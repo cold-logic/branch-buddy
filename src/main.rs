@@ -6,6 +6,30 @@ use regex::Regex;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VcsMode {
+    Git,
+    Jj,
+}
+
+impl VcsMode {
+    pub fn detect() -> Self {
+        let is_jj = Command::new("jj")
+            .arg("root")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        if is_jj {
+            VcsMode::Jj
+        } else {
+            VcsMode::Git
+        }
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "branch-buddy")]
 #[command(
@@ -733,6 +757,13 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_vcs_mode_detection_fallback() {
+        // VcsMode::detect() should return Git or Jj without panicking
+        let mode = VcsMode::detect();
+        assert!(matches!(mode, VcsMode::Git | VcsMode::Jj));
+    }
 
     #[test]
     fn test_slugify() {
