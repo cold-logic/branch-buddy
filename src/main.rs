@@ -3,8 +3,103 @@ use clap::{Parser, Subcommand};
 use colored::Colorize;
 use dialoguer::{FuzzySelect, theme::ColorfulTheme};
 use regex::Regex;
+use serde::Deserialize;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize, Default, Clone, PartialEq)]
+pub struct Config {
+    pub naming: Option<NamingConfig>,
+    pub defaults: Option<DefaultsConfig>,
+    pub tree: Option<TreeConfig>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize, Default, Clone, PartialEq)]
+pub struct NamingConfig {
+    pub pattern: Option<String>,
+    pub max_length: Option<usize>,
+    pub prefix_separator: Option<String>,
+    pub ticket_separator: Option<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize, Default, Clone, PartialEq)]
+pub struct DefaultsConfig {
+    pub base: Option<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize, Default, Clone, PartialEq)]
+pub struct TreeConfig {
+    pub no_legend: Option<bool>,
+}
+
+impl Config {
+    pub fn load(explicit_path: Option<&std::path::Path>) -> Self {
+        let mut config = Config::default();
+
+        // 1. Global config (~/.config/branchbuddy/config.toml)
+        if let Some(home) = dirs::home_dir() {
+            let global_path = home.join(".config").join("branchbuddy").join("config.toml");
+            if let Ok(content) = std::fs::read_to_string(global_path)
+                && let Ok(parsed) = toml::from_str::<Config>(&content)
+            {
+                config.merge(parsed);
+            }
+        }
+
+        // 2. Repo root config (.branchbuddy.toml)
+        let repo_path = std::path::Path::new(".branchbuddy.toml");
+        if let Ok(content) = std::fs::read_to_string(repo_path)
+            && let Ok(parsed) = toml::from_str::<Config>(&content)
+        {
+            config.merge(parsed);
+        }
+
+        // 3. Explicit config path from CLI
+        if let Some(path) = explicit_path
+            && let Ok(content) = std::fs::read_to_string(path)
+            && let Ok(parsed) = toml::from_str::<Config>(&content)
+        {
+            config.merge(parsed);
+        }
+
+        config
+    }
+
+    pub fn merge(&mut self, other: Config) {
+        if let Some(other_naming) = other.naming {
+            let n = self.naming.get_or_insert_with(Default::default);
+            if other_naming.pattern.is_some() {
+                n.pattern = other_naming.pattern;
+            }
+            if other_naming.max_length.is_some() {
+                n.max_length = other_naming.max_length;
+            }
+            if other_naming.prefix_separator.is_some() {
+                n.prefix_separator = other_naming.prefix_separator;
+            }
+            if other_naming.ticket_separator.is_some() {
+                n.ticket_separator = other_naming.ticket_separator;
+            }
+        }
+        if let Some(other_defaults) = other.defaults {
+            let d = self.defaults.get_or_insert_with(Default::default);
+            if other_defaults.base.is_some() {
+                d.base = other_defaults.base;
+            }
+        }
+        if let Some(other_tree) = other.tree {
+            let t = self.tree.get_or_insert_with(Default::default);
+            if other_tree.no_legend.is_some() {
+                t.no_legend = other_tree.no_legend;
+            }
+        }
+    }
+}
+
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +145,10 @@ impl VcsMode {
     long_about = None
 )]
 struct Cli {
+    /// Path to custom configuration file
+    #[arg(global = true, long)]
+    config: Option<std::path::PathBuf>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -182,7 +281,7 @@ fn current_branch() -> Result<String> {
     Ok(branch)
 }
 
-fn slugify(input: &str) -> String {
+fn slugify(input: &str, max_length: Option<usize>) -> String {
     let mut s = input.to_lowercase();
     let re = Regex::new(r"[^a-z0-9]").unwrap();
     s = re.replace_all(&s, "-").to_string();
@@ -200,7 +299,8 @@ fn slugify(input: &str) -> String {
         s = format!("branch-{}", now);
     }
 
-    s.chars().take(63).collect()
+    let limit = max_length.unwrap_or(63);
+    s.chars().take(limit).collect()
 }
 
 fn ref_exists(git_ref: &str) -> bool {
@@ -398,9 +498,9 @@ fn format_jj_node_label(ref_name: &str) -> String {
     ref_name.to_string()
 }
 
-fn print_tree(branch: Option<&str>, no_legend: bool) -> Result<()> {
+fn print_tree(branch: Option<&str>, no_legend: bool, config: &Config) -> Result<()> {
     let mode = VcsMode::detect();
-    print_tree_with_mode(branch, no_legend, mode)
+    print_tree_with_mode(branch, no_legend, mode, config)
 }
 
 fn get_jj_parent_ref(ref_name: &str) -> Option<String> {
@@ -445,7 +545,12 @@ fn get_jj_parent_ref(ref_name: &str) -> Option<String> {
 
 
 
-fn print_tree_with_mode(branch: Option<&str>, no_legend: bool, mode: VcsMode) -> Result<()> {
+fn print_tree_with_mode(
+    branch: Option<&str>,
+    no_legend: bool,
+    mode: VcsMode,
+    config: &Config,
+) -> Result<()> {
     let start_branch = match branch {
         Some(b) => b.to_string(),
         None => match mode {
@@ -468,7 +573,10 @@ fn print_tree_with_mode(branch: Option<&str>, no_legend: bool, mode: VcsMode) ->
         println!("{}", line);
     }
 
-    if !no_legend {
+    let hide_legend =
+        no_legend || config.tree.as_ref().and_then(|t| t.no_legend).unwrap_or(false);
+
+    if !hide_legend {
         println!(
             "\n{}",
             "Legend: 🌿 Branch/Feature | 🪵 Trunk/Main Target".dimmed()
@@ -651,6 +759,7 @@ fn new_branch(
     no_checkout: bool,
     json: bool,
     fail_if_exists: bool,
+    config: &Config,
 ) -> Result<()> {
     let mode = VcsMode::detect();
     new_branch_with_mode(
@@ -663,6 +772,7 @@ fn new_branch(
         json,
         fail_if_exists,
         mode,
+        config,
     )
 }
 
@@ -677,7 +787,20 @@ fn new_branch_with_mode(
     json: bool,
     fail_if_exists: bool,
     mode: VcsMode,
+    config: &Config,
 ) -> Result<()> {
+    let max_len = config.naming.as_ref().and_then(|n| n.max_length);
+    let prefix_sep = config
+        .naming
+        .as_ref()
+        .and_then(|n| n.prefix_separator.as_deref())
+        .unwrap_or("/");
+    let ticket_sep = config
+        .naming
+        .as_ref()
+        .and_then(|n| n.ticket_separator.as_deref())
+        .unwrap_or("-");
+
     match mode {
         VcsMode::Git => {
             let mut create_at = "HEAD".to_string();
@@ -687,47 +810,56 @@ fn new_branch_with_mode(
                     create_at = b.to_string();
                     b.to_string()
                 }
-                None => match current_branch() {
-                    Ok(b) => {
-                        create_at = b.clone();
-                        b
-                    }
-                    Err(e) => {
-                        if e.to_string().contains("detached HEAD") {
-                            println!(
-                                "{} {}",
-                                "⚠️".yellow(),
-                                "Currently in detached HEAD. Resolving base branch...".yellow()
-                            );
-
-                            let all_branches = get_all_local_branches();
-                            let candidates: Vec<&str> =
-                                all_branches.iter().map(|s| s.as_str()).collect();
-
-                            let ranked = rank_closest_bases("HEAD", &candidates);
-
-                            if ranked.is_empty() {
-                                return Err(anyhow!(
-                                    "Failed to find any local branches. Please specify one explicitly: `branch-buddy new <name> <base>`"
-                                ));
+                None => {
+                    if let Some(default_base) =
+                        config.defaults.as_ref().and_then(|d| d.base.as_deref())
+                    {
+                        create_at = default_base.to_string();
+                        default_base.to_string()
+                    } else {
+                        match current_branch() {
+                            Ok(b) => {
+                                create_at = b.clone();
+                                b
                             }
+                            Err(e) => {
+                                if e.to_string().contains("detached HEAD") {
+                                    println!(
+                                        "{} {}",
+                                        "⚠️".yellow(),
+                                        "Currently in detached HEAD. Resolving base branch...".yellow()
+                                    );
 
-                            let selection = FuzzySelect::with_theme(&ColorfulTheme::default())
-                                .with_prompt(
-                                    "Select base branch for metadata (closest match pre-selected)",
-                                )
-                                .default(0)
-                                .items(&ranked)
-                                .interact()?;
+                                    let all_branches = get_all_local_branches();
+                                    let candidates: Vec<&str> =
+                                        all_branches.iter().map(|s| s.as_str()).collect();
 
-                            let base = ranked[selection].clone();
-                            println!("💾 Selected base: {}", base.blue());
-                            base
-                        } else {
-                            return Err(e);
+                                    let ranked = rank_closest_bases("HEAD", &candidates);
+
+                                    if ranked.is_empty() {
+                                        return Err(anyhow!(
+                                            "Failed to find any local branches. Please specify one explicitly: `branch-buddy new <name> <base>`"
+                                        ));
+                                    }
+
+                                    let selection = FuzzySelect::with_theme(&ColorfulTheme::default())
+                                        .with_prompt(
+                                            "Select base branch for metadata (closest match pre-selected)",
+                                        )
+                                        .default(0)
+                                        .items(&ranked)
+                                        .interact()?;
+
+                                    let base = ranked[selection].clone();
+                                    println!("💾 Selected base: {}", base.blue());
+                                    base
+                                } else {
+                                    return Err(e);
+                                }
+                            }
                         }
                     }
-                },
+                }
             };
 
             // verify base
@@ -738,12 +870,12 @@ fn new_branch_with_mode(
                 ));
             }
 
-            let slug = slugify(title);
+            let slug = slugify(title, max_len);
 
             let mut branch_name = match (r#type, ticket) {
-                (Some(t), Some(id)) => format!("{}/{}-{}", t, id, slug),
-                (Some(t), None) => format!("{}/{}", t, slug),
-                (None, Some(id)) => format!("{}-{}", id, slug),
+                (Some(t), Some(id)) => format!("{}{}{}{}{}", t, prefix_sep, id, ticket_sep, slug),
+                (Some(t), None) => format!("{}{}{}", t, prefix_sep, slug),
+                (None, Some(id)) => format!("{}{}{}", id, ticket_sep, slug),
                 (None, None) => slug,
             };
 
@@ -799,7 +931,15 @@ fn new_branch_with_mode(
         VcsMode::Jj => {
             let base_branch = match base {
                 Some(b) => b.to_string(),
-                None => get_current_jj_bookmark_or_at(),
+                None => {
+                    if let Some(default_base) =
+                        config.defaults.as_ref().and_then(|d| d.base.as_deref())
+                    {
+                        default_base.to_string()
+                    } else {
+                        get_current_jj_bookmark_or_at()
+                    }
+                }
             };
 
             if !jj_ref_exists(&base_branch) && !ref_exists(&base_branch) {
@@ -809,12 +949,12 @@ fn new_branch_with_mode(
                 ));
             }
 
-            let slug = slugify(title);
+            let slug = slugify(title, max_len);
 
             let mut branch_name = match (r#type, ticket) {
-                (Some(t), Some(id)) => format!("{}/{}-{}", t, id, slug),
-                (Some(t), None) => format!("{}/{}", t, slug),
-                (None, Some(id)) => format!("{}-{}", id, slug),
+                (Some(t), Some(id)) => format!("{}{}{}{}{}", t, prefix_sep, id, ticket_sep, slug),
+                (Some(t), None) => format!("{}{}{}", t, prefix_sep, slug),
+                (None, Some(id)) => format!("{}{}{}", id, ticket_sep, slug),
                 (None, None) => slug,
             };
 
@@ -1154,6 +1294,7 @@ fn doctor(fix: bool, install_hook: bool) -> Result<()> {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    let config = Config::load(cli.config.as_deref());
 
     match &cli.command {
         Commands::New {
@@ -1175,6 +1316,7 @@ fn main() -> Result<()> {
                 *no_checkout,
                 *json,
                 *fail_if_exists,
+                &config,
             )?;
         }
         Commands::GetBase { branch } => {
@@ -1204,7 +1346,7 @@ fn main() -> Result<()> {
             guess_base(branch.as_deref(), candidates, *write)?;
         }
         Commands::Tree { branch, no_legend } => {
-            print_tree(branch.as_deref(), *no_legend)?;
+            print_tree(branch.as_deref(), *no_legend, &config)?;
         }
         Commands::Doctor { fix, install_hook } => {
             doctor(*fix, *install_hook)?;
@@ -1253,9 +1395,10 @@ mod tests {
 
     #[test]
     fn test_slugify() {
-        assert_eq!(slugify("Fix login bug"), "fix-login-bug");
-        assert_eq!(slugify("User Signup (New Flow)!"), "user-signup-new-flow");
-        let empty = slugify("   ");
+        assert_eq!(slugify("Fix login bug", None), "fix-login-bug");
+        assert_eq!(slugify("User Signup (New Flow)!", Some(15)), "user-signup-new");
+        assert_eq!(slugify("User Signup (New Flow)!", None), "user-signup-new-flow");
+        let empty = slugify("   ", None);
         assert!(empty.starts_with("branch-"));
     }
 
@@ -1308,7 +1451,7 @@ mod tests {
     #[test]
     fn test_jj_new_branch_slugification() {
         let title = "Fix user signup flow";
-        let slug = slugify(title);
+        let slug = slugify(title, None);
         assert_eq!(slug, "fix-user-signup-flow");
     }
 
@@ -1324,6 +1467,7 @@ mod tests {
             true,
             false,
             VcsMode::Jj,
+            &Config::default(),
         );
         assert!(res.is_ok());
     }
@@ -1435,4 +1579,51 @@ mod tests {
             panic!("Expected Commands::Log");
         }
     }
+
+    #[test]
+    fn test_config_partial_deserialization() {
+        let toml_str = r#"
+        [naming]
+        max_length = 50
+
+        [tree]
+        no_legend = true
+        "#;
+
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.naming.as_ref().unwrap().max_length, Some(50));
+        assert_eq!(config.naming.as_ref().unwrap().pattern, None);
+        assert_eq!(config.tree.as_ref().unwrap().no_legend, Some(true));
+        assert!(config.defaults.is_none());
+    }
+
+    #[test]
+    fn test_config_cascade_merging() {
+        let mut base_config = Config {
+            naming: Some(NamingConfig {
+                max_length: Some(63),
+                ..Default::default()
+            }),
+            tree: Some(TreeConfig {
+                no_legend: Some(false),
+            }),
+            ..Default::default()
+        };
+
+        let repo_config = Config {
+            naming: Some(NamingConfig {
+                max_length: Some(50),
+                ..Default::default()
+            }),
+            tree: Some(TreeConfig {
+                no_legend: Some(true),
+            }),
+            ..Default::default()
+        };
+
+        base_config.merge(repo_config);
+        assert_eq!(base_config.naming.as_ref().unwrap().max_length, Some(50));
+        assert_eq!(base_config.tree.as_ref().unwrap().no_legend, Some(true));
+    }
 }
+
