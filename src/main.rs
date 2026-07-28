@@ -262,32 +262,46 @@ fn has_base(branch: Option<&str>) -> Result<bool> {
     Ok(output.status.success())
 }
 
-fn build_tree_lines<F>(start: &str, mut get_base_fn: F) -> Vec<String>
+fn build_tree_lines<F>(start: &str, get_base_fn: F) -> Vec<String>
 where
     F: FnMut(&str) -> Option<String>,
+{
+    build_tree_lines_with_formatter(start, get_base_fn, |s| s.to_string())
+}
+
+fn build_tree_lines_with_formatter<F, L>(
+    start: &str,
+    mut get_base_fn: F,
+    mut format_label_fn: L,
+) -> Vec<String>
+where
+    F: FnMut(&str) -> Option<String>,
+    L: FnMut(&str) -> String,
 {
     let mut lines = Vec::new();
     let mut current = start.to_string();
 
-    lines.push(current.clone().green().to_string());
+    let start_label = format_label_fn(&current);
+    lines.push(start_label.green().to_string());
 
     let mut depth = 1;
     let mut seen = vec![current.clone()];
 
     while let Some(base) = get_base_fn(&current) {
+        let base_label = format_label_fn(&base);
         if seen.contains(&base) {
             let prefix = "    ".repeat(depth - 1);
             lines.push(format!(
                 "{}└── {} {}",
                 prefix.dimmed(),
-                base.blue(),
+                base_label.blue(),
                 "(cycle detected)".red()
             ));
             break;
         }
 
         let prefix = "    ".repeat(depth - 1);
-        lines.push(format!("{}└── {}", prefix.dimmed(), base.blue()));
+        lines.push(format!("{}└── {}", prefix.dimmed(), base_label.blue()));
         seen.push(base.clone());
         current = base;
         depth += 1;
@@ -296,18 +310,126 @@ where
     lines
 }
 
+fn format_jj_node_label(ref_name: &str) -> String {
+    let output = Command::new("jj")
+        .args([
+            "log",
+            "-r",
+            ref_name,
+            "--no-graph",
+            "-T",
+            r#"change_id.short() ++ "\t" ++ local_bookmarks"#,
+        ])
+        .output();
+
+    if let Ok(o) = output
+        && o.status.success()
+    {
+        let stdout = String::from_utf8_lossy(&o.stdout);
+        let line = stdout.lines().next().unwrap_or("").trim_end_matches(['\r', '\n']);
+        if !line.is_empty() {
+            let mut parts = line.split('\t');
+            let change_id = parts.next().map(|s| s.trim()).filter(|s| !s.is_empty());
+            let bookmarks_str = parts.next().unwrap_or("").trim();
+            let bookmarks: Vec<&str> = bookmarks_str.split_whitespace().collect();
+
+            if let Some(cid) = change_id {
+                let name = if jj_bookmark_exists(ref_name) || bookmarks.contains(&ref_name) {
+                    ref_name
+                } else if let Some(&first_bm) = bookmarks.first() {
+                    first_bm
+                } else {
+                    "(un-bookmarked)"
+                };
+                return format!("{} [change: {}]", name, cid);
+            }
+        }
+    }
+
+    ref_name.to_string()
+}
+
 fn print_tree(branch: Option<&str>) -> Result<()> {
+    let mode = VcsMode::detect();
+    print_tree_with_mode(branch, mode)
+}
+
+fn print_tree_with_mode(branch: Option<&str>, mode: VcsMode) -> Result<()> {
     let start_branch = match branch {
         Some(b) => b.to_string(),
-        None => current_branch()?,
+        None => match mode {
+            VcsMode::Git => current_branch()?,
+            VcsMode::Jj => get_current_jj_bookmark_or_at(),
+        },
     };
 
-    let lines = build_tree_lines(&start_branch, |b| get_base(Some(b)).ok());
+    let lines = match mode {
+        VcsMode::Git => build_tree_lines(&start_branch, |b| get_base(Some(b)).ok()),
+        VcsMode::Jj => build_tree_lines_with_formatter(
+            &start_branch,
+            |b| get_base(Some(b)).ok(),
+            format_jj_node_label,
+        ),
+    };
+
     for line in lines {
         println!("{}", line);
     }
 
     Ok(())
+}
+
+
+fn get_current_jj_bookmark_or_at() -> String {
+    if let Ok(output) = Command::new("jj")
+        .args(["log", "-r", "@", "--no-graph", "-T", "local_bookmarks"])
+        .output()
+        && output.status.success()
+    {
+        let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !text.is_empty()
+            && let Some(b) = text.split_whitespace().next()
+        {
+            return b.to_string();
+        }
+    }
+
+    if let Ok(output) = Command::new("jj")
+        .args(["log", "-r", "@-", "--no-graph", "-T", "local_bookmarks"])
+        .output()
+        && output.status.success()
+    {
+        let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !text.is_empty()
+            && let Some(b) = text.split_whitespace().next()
+        {
+            return b.to_string();
+        }
+    }
+
+    "@".to_string()
+}
+
+fn jj_ref_exists(git_ref: &str) -> bool {
+    let output = Command::new("jj")
+        .args(["log", "-r", git_ref, "--no-graph"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output();
+    output.map(|o| o.status.success()).unwrap_or(false)
+}
+
+fn jj_bookmark_exists(name: &str) -> bool {
+    let output = Command::new("jj")
+        .args(["bookmark", "list", name])
+        .output();
+    if let Ok(o) = output
+        && o.status.success()
+    {
+        let stdout = String::from_utf8_lossy(&o.stdout);
+        return stdout.contains(&format!("{}:", name));
+    }
+    false
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -321,118 +443,237 @@ fn new_branch(
     json: bool,
     fail_if_exists: bool,
 ) -> Result<()> {
-    let mut create_at = "HEAD".to_string();
+    let mode = VcsMode::detect();
+    new_branch_with_mode(
+        title,
+        base,
+        r#type,
+        ticket,
+        dry_run,
+        no_checkout,
+        json,
+        fail_if_exists,
+        mode,
+    )
+}
 
-    let base_branch = match base {
-        Some(b) => {
-            create_at = b.to_string();
-            b.to_string()
-        }
-        None => match current_branch() {
-            Ok(b) => {
-                create_at = b.clone();
-                b
-            }
-            Err(e) => {
-                if e.to_string().contains("detached HEAD") {
-                    println!(
-                        "{} {}",
-                        "⚠️".yellow(),
-                        "Currently in detached HEAD. Resolving base branch...".yellow()
-                    );
+#[allow(clippy::too_many_arguments)]
+fn new_branch_with_mode(
+    title: &str,
+    base: Option<&str>,
+    r#type: Option<&str>,
+    ticket: Option<&str>,
+    dry_run: bool,
+    no_checkout: bool,
+    json: bool,
+    fail_if_exists: bool,
+    mode: VcsMode,
+) -> Result<()> {
+    match mode {
+        VcsMode::Git => {
+            let mut create_at = "HEAD".to_string();
 
-                    let all_branches = get_all_local_branches();
-                    let candidates: Vec<&str> = all_branches.iter().map(|s| s.as_str()).collect();
-
-                    let ranked = rank_closest_bases("HEAD", &candidates);
-
-                    if ranked.is_empty() {
-                        return Err(anyhow!(
-                            "Failed to find any local branches. Please specify one explicitly: `branch-buddy new <name> <base>`"
-                        ));
+            let base_branch = match base {
+                Some(b) => {
+                    create_at = b.to_string();
+                    b.to_string()
+                }
+                None => match current_branch() {
+                    Ok(b) => {
+                        create_at = b.clone();
+                        b
                     }
+                    Err(e) => {
+                        if e.to_string().contains("detached HEAD") {
+                            println!(
+                                "{} {}",
+                                "⚠️".yellow(),
+                                "Currently in detached HEAD. Resolving base branch...".yellow()
+                            );
 
-                    let selection = FuzzySelect::with_theme(&ColorfulTheme::default())
-                        .with_prompt("Select base branch for metadata (closest match pre-selected)")
-                        .default(0)
-                        .items(&ranked)
-                        .interact()?;
+                            let all_branches = get_all_local_branches();
+                            let candidates: Vec<&str> =
+                                all_branches.iter().map(|s| s.as_str()).collect();
 
-                    let base = ranked[selection].clone();
-                    println!("💾 Selected base: {}", base.blue());
-                    base
-                } else {
-                    return Err(e);
+                            let ranked = rank_closest_bases("HEAD", &candidates);
+
+                            if ranked.is_empty() {
+                                return Err(anyhow!(
+                                    "Failed to find any local branches. Please specify one explicitly: `branch-buddy new <name> <base>`"
+                                ));
+                            }
+
+                            let selection = FuzzySelect::with_theme(&ColorfulTheme::default())
+                                .with_prompt(
+                                    "Select base branch for metadata (closest match pre-selected)",
+                                )
+                                .default(0)
+                                .items(&ranked)
+                                .interact()?;
+
+                            let base = ranked[selection].clone();
+                            println!("💾 Selected base: {}", base.blue());
+                            base
+                        } else {
+                            return Err(e);
+                        }
+                    }
+                },
+            };
+
+            // verify base
+            if !ref_exists(&base_branch) {
+                return Err(anyhow!(
+                    "Base branch '{}' does not appear to be a valid ref",
+                    base_branch
+                ));
+            }
+
+            let slug = slugify(title);
+
+            let mut branch_name = match (r#type, ticket) {
+                (Some(t), Some(id)) => format!("{}/{}-{}", t, id, slug),
+                (Some(t), None) => format!("{}/{}", t, slug),
+                (None, Some(id)) => format!("{}-{}", id, slug),
+                (None, None) => slug,
+            };
+
+            if branch_exists(&branch_name) {
+                if fail_if_exists {
+                    return Err(anyhow!("Branch '{}' already exists.", branch_name));
+                }
+                let mut i = 2;
+                loop {
+                    let alt_name = format!("{}-{}", branch_name, i);
+                    if !branch_exists(&alt_name) {
+                        branch_name = alt_name;
+                        break;
+                    }
+                    i += 1;
                 }
             }
-        },
-    };
 
-    // verify base
-    if !ref_exists(&base_branch) {
-        return Err(anyhow!(
-            "Base branch '{}' does not appear to be a valid ref",
-            base_branch
-        ));
-    }
+            if !dry_run {
+                let mut branch_cmd = Command::new("git");
+                branch_cmd.args(["branch", &branch_name, &create_at]);
+                let output = branch_cmd.output()?;
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    return Err(anyhow!("Failed to create branch: {}", stderr));
+                }
 
-    let slug = slugify(title);
+                if !no_checkout {
+                    let mut co_cmd = Command::new("git");
+                    co_cmd.args(["checkout", &branch_name]);
+                    let co_output = co_cmd.output()?;
+                    if !co_output.status.success() {
+                        let stderr = String::from_utf8_lossy(&co_output.stderr);
+                        return Err(anyhow!("Failed to checkout branch: {}", stderr));
+                    }
+                }
 
-    let mut branch_name = match (r#type, ticket) {
-        (Some(t), Some(id)) => format!("{}/{}-{}", t, id, slug),
-        (Some(t), None) => format!("{}/{}", t, slug),
-        (None, Some(id)) => format!("{}-{}", id, slug),
-        (None, None) => slug,
-    };
-
-    if branch_exists(&branch_name) {
-        if fail_if_exists {
-            return Err(anyhow!("Branch '{}' already exists.", branch_name));
-        }
-        let mut i = 2;
-        loop {
-            let alt_name = format!("{}-{}", branch_name, i);
-            if !branch_exists(&alt_name) {
-                branch_name = alt_name;
-                break;
+                set_base(&base_branch, Some(&branch_name), false)?;
             }
-            i += 1;
-        }
-    }
 
-    if !dry_run {
-        let mut branch_cmd = Command::new("git");
-        branch_cmd.args(["branch", &branch_name, &create_at]);
-        let output = branch_cmd.output()?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow!("Failed to create branch: {}", stderr));
-        }
-
-        if !no_checkout {
-            let mut co_cmd = Command::new("git");
-            co_cmd.args(["checkout", &branch_name]);
-            let co_output = co_cmd.output()?;
-            if !co_output.status.success() {
-                let stderr = String::from_utf8_lossy(&co_output.stderr);
-                return Err(anyhow!("Failed to checkout branch: {}", stderr));
+            if json {
+                println!(
+                    r#"{{"branch": "{}", "base": "{}"}}"#,
+                    branch_name, base_branch
+                );
+            } else {
+                println!("✨ Created branch: {}", branch_name.green());
+                println!("🌱 Base: {}", base_branch.blue());
             }
+
+            Ok(())
         }
+        VcsMode::Jj => {
+            let base_branch = match base {
+                Some(b) => b.to_string(),
+                None => get_current_jj_bookmark_or_at(),
+            };
 
-        set_base(&base_branch, Some(&branch_name), false)?;
+            if !jj_ref_exists(&base_branch) && !ref_exists(&base_branch) {
+                return Err(anyhow!(
+                    "Base branch '{}' does not appear to be a valid ref",
+                    base_branch
+                ));
+            }
+
+            let slug = slugify(title);
+
+            let mut branch_name = match (r#type, ticket) {
+                (Some(t), Some(id)) => format!("{}/{}-{}", t, id, slug),
+                (Some(t), None) => format!("{}/{}", t, slug),
+                (None, Some(id)) => format!("{}-{}", id, slug),
+                (None, None) => slug,
+            };
+
+            if branch_exists(&branch_name) || jj_bookmark_exists(&branch_name) {
+                if fail_if_exists {
+                    return Err(anyhow!("Branch/bookmark '{}' already exists.", branch_name));
+                }
+                let mut i = 2;
+                loop {
+                    let alt_name = format!("{}-{}", branch_name, i);
+                    if !branch_exists(&alt_name) && !jj_bookmark_exists(&alt_name) {
+                        branch_name = alt_name;
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+
+            if !dry_run {
+                let prev_at = if no_checkout {
+                    Command::new("jj")
+                        .args(["log", "-r", "@", "--no-graph", "-T", "change_id"])
+                        .output()
+                        .ok()
+                        .and_then(|o| String::from_utf8(o.stdout).ok())
+                        .map(|s| s.trim().to_string())
+                } else {
+                    None
+                };
+
+                let new_cmd = Command::new("jj")
+                    .args(["new", &base_branch, "-m", title])
+                    .output()?;
+                if !new_cmd.status.success() {
+                    let stderr = String::from_utf8_lossy(&new_cmd.stderr);
+                    return Err(anyhow!("Failed to create jj revision: {}", stderr));
+                }
+
+                let bm_cmd = Command::new("jj")
+                    .args(["bookmark", "create", &branch_name, "-r", "@"])
+                    .output()?;
+                if !bm_cmd.status.success() {
+                    let stderr = String::from_utf8_lossy(&bm_cmd.stderr);
+                    return Err(anyhow!("Failed to create jj bookmark: {}", stderr));
+                }
+
+                if let Some(prev) = prev_at
+                    && !prev.is_empty()
+                {
+                    let _ = Command::new("jj").args(["edit", &prev]).output();
+                }
+
+                set_base(&base_branch, Some(&branch_name), false)?;
+            }
+
+            if json {
+                println!(
+                    r#"{{"branch": "{}", "base": "{}"}}"#,
+                    branch_name, base_branch
+                );
+            } else {
+                println!("✨ Created branch: {}", branch_name.green());
+                println!("🌱 Base: {}", base_branch.blue());
+            }
+
+            Ok(())
+        }
     }
-
-    if json {
-        println!(
-            r#"{{"branch": "{}", "base": "{}"}}"#,
-            branch_name, base_branch
-        );
-    } else {
-        println!("✨ Created branch: {}", branch_name.green());
-        println!("🌱 Base: {}", base_branch.blue());
-    }
-
-    Ok(())
 }
 
 fn get_all_local_branches() -> Vec<String> {
@@ -846,4 +1087,87 @@ mod tests {
         assert_eq!(strip(&lines[2]), "    └── C");
         assert_eq!(strip(&lines[3]), "        └── A (cycle detected)");
     }
+
+    #[test]
+    fn test_jj_new_branch_slugification() {
+        let title = "Fix user signup flow";
+        let slug = slugify(title);
+        assert_eq!(slug, "fix-user-signup-flow");
+    }
+
+    #[test]
+    fn test_jj_new_branch_dry_run() {
+        let res = new_branch_with_mode(
+            "Fix user signup flow",
+            Some("main"),
+            Some("feature"),
+            Some("ABC-123"),
+            true,
+            false,
+            true,
+            false,
+            VcsMode::Jj,
+        );
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_build_tree_lines_with_formatter() {
+        let mock_bases = |branch: &str| -> Option<String> {
+            match branch {
+                "feature/my-branch" => Some("dev".to_string()),
+                "dev" => Some("main".to_string()),
+                "main" => None,
+                _ => None,
+            }
+        };
+
+        let mock_formatter = |branch: &str| -> String {
+            match branch {
+                "feature/my-branch" => "feature/my-branch [change: abc12345]".to_string(),
+                "dev" => "dev [change: def67890]".to_string(),
+                "main" => "main [change: ghi11111]".to_string(),
+                _ => branch.to_string(),
+            }
+        };
+
+        let lines = build_tree_lines_with_formatter("feature/my-branch", mock_bases, mock_formatter);
+        assert_eq!(lines.len(), 3);
+        let strip = |s: &str| -> String {
+            let re = Regex::new(r"\x1b\[[0-9;]*m").unwrap();
+            re.replace_all(s, "").to_string()
+        };
+        assert_eq!(strip(&lines[0]), "feature/my-branch [change: abc12345]");
+        assert_eq!(strip(&lines[1]), "└── dev [change: def67890]");
+        assert_eq!(strip(&lines[2]), "    └── main [change: ghi11111]");
+    }
+
+    #[test]
+    fn test_build_tree_lines_unbookmarked() {
+        let mock_bases = |branch: &str| -> Option<String> {
+            match branch {
+                "@" => Some("main".to_string()),
+                "main" => None,
+                _ => None,
+            }
+        };
+
+        let mock_formatter = |branch: &str| -> String {
+            match branch {
+                "@" => "(un-bookmarked) [change: kkmvxyvr]".to_string(),
+                "main" => "main [change: zzzzzzzz]".to_string(),
+                _ => branch.to_string(),
+            }
+        };
+
+        let lines = build_tree_lines_with_formatter("@", mock_bases, mock_formatter);
+        assert_eq!(lines.len(), 2);
+        let strip = |s: &str| -> String {
+            let re = Regex::new(r"\x1b\[[0-9;]*m").unwrap();
+            re.replace_all(s, "").to_string()
+        };
+        assert_eq!(strip(&lines[0]), "(un-bookmarked) [change: kkmvxyvr]");
+        assert_eq!(strip(&lines[1]), "└── main [change: zzzzzzzz]");
+    }
 }
+
