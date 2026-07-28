@@ -529,20 +529,14 @@ fn is_jj_trunk(ref_name: &str) -> bool {
     if ref_name == "root()" || ref_name == "zzzzzzzzzzzz" || ref_name.is_empty() {
         return false;
     }
-    if let Ok(output) = Command::new("jj")
-        .args([
-            "log",
-            "-r",
-            &format!("({}) & trunk()", ref_name),
-            "--no-graph",
-            "-T",
-            "commit_id",
-        ])
-        .output()
-        && output.status.success()
+    let output = Command::new("jj")
+        .args(["log", "-r", "trunk()", "--no-graph", "-T", "local_bookmarks"])
+        .output();
+    if let Ok(o) = output
+        && o.status.success()
     {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        return !stdout.trim().is_empty();
+        let stdout = String::from_utf8_lossy(&o.stdout);
+        return stdout.split_whitespace().any(|b| b == ref_name);
     }
     false
 }
@@ -922,7 +916,7 @@ fn handle_status(branch: Option<&str>, json: bool) -> Result<()> {
             );
             let cmd = match mode {
                 VcsMode::Git => format!("git rebase {}", base),
-                VcsMode::Jj => format!("jj rebase -s {} -d {}", target, base),
+                VcsMode::Jj => format!("jj rebase -d {}", base),
             };
             println!("   Run: {}", cmd.cyan());
         } else {
@@ -940,6 +934,12 @@ fn handle_status(branch: Option<&str>, json: bool) -> Result<()> {
 }
 
 fn git_status_stats(target: &str, base: &str) -> Result<StatusStats> {
+    if !ref_exists(base) {
+        return Err(anyhow!(
+            "Base branch '{}' not found locally. Fetch first.",
+            base
+        ));
+    }
     let ahead = run_git_count(&format!("{}..{}", base, target))?;
     let behind = run_git_count(&format!("{}..{}", target, base))?;
     let merge_base = run_git_output(&["merge-base", target, base])?;
@@ -964,6 +964,12 @@ fn git_status_stats(target: &str, base: &str) -> Result<StatusStats> {
 }
 
 fn jj_status_stats(target: &str, base: &str) -> Result<StatusStats> {
+    if !jj_ref_exists(base) {
+        return Err(anyhow!(
+            "Base branch '{}' not found locally. Fetch first.",
+            base
+        ));
+    }
     let ahead = count_jj_revset(&format!("{}..{}", base, target));
     let behind = count_jj_revset(&format!("{}..{}", target, base));
 
