@@ -112,7 +112,12 @@ enum Commands {
         write: bool,
     },
     /// Show the branch ancestry tree
-    Tree { branch: Option<String> },
+    Tree {
+        branch: Option<String>,
+        /// Hide the branch tree legend at the bottom
+        #[arg(long)]
+        no_legend: bool,
+    },
     /// Install git hooks (post-checkout) to automatically track branches
     #[command(alias = "install")]
     InstallHooks,
@@ -269,6 +274,28 @@ where
     build_tree_lines_with_formatter(start, get_base_fn, |s| s.to_string())
 }
 
+fn is_jj_trunk(ref_name: &str) -> bool {
+    if ref_name == "root()" || ref_name == "zzzzzzzzzzzz" || ref_name.is_empty() {
+        return false;
+    }
+    if let Ok(output) = Command::new("jj")
+        .args([
+            "log",
+            "-r",
+            &format!("({}) & trunk()", ref_name),
+            "--no-graph",
+            "-T",
+            "commit_id",
+        ])
+        .output()
+        && output.status.success()
+    {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        return !stdout.trim().is_empty();
+    }
+    false
+}
+
 fn build_tree_lines_with_formatter<F, L>(
     start: &str,
     mut get_base_fn: F,
@@ -281,19 +308,22 @@ where
     let mut lines = Vec::new();
     let mut current = start.to_string();
 
+    let start_icon = if is_jj_trunk(&current) { "🪵" } else { "🌿" };
     let start_label = format_label_fn(&current);
-    lines.push(start_label.green().to_string());
+    lines.push(format!("{} {}", start_icon, start_label.green()));
 
     let mut depth = 1;
     let mut seen = vec![current.clone()];
 
     while let Some(base) = get_base_fn(&current) {
+        let base_icon = if is_jj_trunk(&base) { "🪵" } else { "🌿" };
         let base_label = format_label_fn(&base);
         if seen.contains(&base) {
             let prefix = "    ".repeat(depth - 1);
             lines.push(format!(
-                "{}└── {} {}",
+                "{}└── {} {} {}",
                 prefix.dimmed(),
+                base_icon,
                 base_label.blue(),
                 "(cycle detected)".red()
             ));
@@ -301,7 +331,7 @@ where
         }
 
         let prefix = "    ".repeat(depth - 1);
-        lines.push(format!("{}└── {}", prefix.dimmed(), base_label.blue()));
+        lines.push(format!("{}└── {} {}", prefix.dimmed(), base_icon, base_label.blue()));
         seen.push(base.clone());
         current = base;
         depth += 1;
@@ -334,10 +364,12 @@ fn format_jj_node_label(ref_name: &str) -> String {
             let bookmarks: Vec<&str> = bookmarks_str.split_whitespace().collect();
 
             if let Some(cid) = change_id {
-                let name = if jj_bookmark_exists(ref_name) || bookmarks.contains(&ref_name) {
+                let name = if bookmarks.contains(&ref_name) {
                     ref_name
                 } else if let Some(&first_bm) = bookmarks.first() {
                     first_bm
+                } else if ref_name != "@" && !ref_name.is_empty() {
+                    ref_name
                 } else {
                     "(un-bookmarked)"
                 };
@@ -349,12 +381,54 @@ fn format_jj_node_label(ref_name: &str) -> String {
     ref_name.to_string()
 }
 
-fn print_tree(branch: Option<&str>) -> Result<()> {
+fn print_tree(branch: Option<&str>, no_legend: bool) -> Result<()> {
     let mode = VcsMode::detect();
-    print_tree_with_mode(branch, mode)
+    print_tree_with_mode(branch, no_legend, mode)
 }
 
-fn print_tree_with_mode(branch: Option<&str>, mode: VcsMode) -> Result<()> {
+fn get_jj_parent_ref(ref_name: &str) -> Option<String> {
+    // Stop parent walk if we hit root or empty ref or trunk
+    if ref_name == "root()" || ref_name == "zzzzzzzzzzzz" || ref_name.is_empty() || is_jj_trunk(ref_name) {
+        return None;
+    }
+
+    let rev_arg = format!("parents({})", ref_name);
+    let output = Command::new("jj")
+        .args([
+            "log",
+            "-r",
+            &rev_arg,
+            "--no-graph",
+            "-T",
+            r#"local_bookmarks ++ "\t" ++ change_id.short() ++ "\t" ++ root"#,
+        ])
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let line = stdout.lines().next().unwrap_or("").trim();
+        if !line.is_empty() {
+            let mut parts = line.split('\t');
+            let bookmarks_str = parts.next().unwrap_or("").trim();
+            if !bookmarks_str.is_empty()
+                && let Some(bm) = bookmarks_str.split_whitespace().next()
+            {
+                return Some(bm.to_string());
+            }
+            let cid = parts.next().unwrap_or("").trim();
+            let is_root = parts.next().unwrap_or("").trim() == "true";
+            if !is_root && !cid.is_empty() && cid != "zzzzzzzzzzzz" {
+                return Some(cid.to_string());
+            }
+        }
+    }
+    None
+}
+
+
+
+fn print_tree_with_mode(branch: Option<&str>, no_legend: bool, mode: VcsMode) -> Result<()> {
     let start_branch = match branch {
         Some(b) => b.to_string(),
         None => match mode {
@@ -367,13 +441,21 @@ fn print_tree_with_mode(branch: Option<&str>, mode: VcsMode) -> Result<()> {
         VcsMode::Git => build_tree_lines(&start_branch, |b| get_base(Some(b)).ok()),
         VcsMode::Jj => build_tree_lines_with_formatter(
             &start_branch,
-            |b| get_base(Some(b)).ok(),
+            |b| get_base(Some(b)).ok().or_else(|| get_jj_parent_ref(b)),
             format_jj_node_label,
         ),
     };
 
+    println!("{}", "🌳 Branch Ancestry (child → parent base):".bold());
     for line in lines {
         println!("{}", line);
+    }
+
+    if !no_legend {
+        println!(
+            "\n{}",
+            "Legend: 🌿 Branch/Feature | 🪵 Trunk/Main Target".dimmed()
+        );
     }
 
     Ok(())
@@ -994,8 +1076,8 @@ fn main() -> Result<()> {
         } => {
             guess_base(branch.as_deref(), candidates, *write)?;
         }
-        Commands::Tree { branch } => {
-            print_tree(branch.as_deref())?;
+        Commands::Tree { branch, no_legend } => {
+            print_tree(branch.as_deref(), *no_legend)?;
         }
         Commands::Doctor { fix, install_hook } => {
             doctor(*fix, *install_hook)?;
@@ -1060,9 +1142,9 @@ mod tests {
             let re = Regex::new(r"\x1b\[[0-9;]*m").unwrap();
             re.replace_all(s, "").to_string()
         };
-        assert_eq!(strip(&lines[0]), "feature/my-branch");
-        assert_eq!(strip(&lines[1]), "└── dev");
-        assert_eq!(strip(&lines[2]), "    └── main");
+        assert_eq!(strip(&lines[0]), "🌿 feature/my-branch");
+        assert_eq!(strip(&lines[1]), "└── 🌿 dev");
+        assert_eq!(strip(&lines[2]), "    └── 🪵 main");
     }
 
     #[test]
@@ -1082,10 +1164,10 @@ mod tests {
             let re = Regex::new(r"\x1b\[[0-9;]*m").unwrap();
             re.replace_all(s, "").to_string()
         };
-        assert_eq!(strip(&lines[0]), "A");
-        assert_eq!(strip(&lines[1]), "└── B");
-        assert_eq!(strip(&lines[2]), "    └── C");
-        assert_eq!(strip(&lines[3]), "        └── A (cycle detected)");
+        assert_eq!(strip(&lines[0]), "🌿 A");
+        assert_eq!(strip(&lines[1]), "└── 🌿 B");
+        assert_eq!(strip(&lines[2]), "    └── 🌿 C");
+        assert_eq!(strip(&lines[3]), "        └── 🌿 A (cycle detected)");
     }
 
     #[test]
@@ -1126,7 +1208,7 @@ mod tests {
             match branch {
                 "feature/my-branch" => "feature/my-branch [change: abc12345]".to_string(),
                 "dev" => "dev [change: def67890]".to_string(),
-                "main" => "main [change: ghi11111]".to_string(),
+                "main" => "main [change: main1234]".to_string(),
                 _ => branch.to_string(),
             }
         };
@@ -1137,15 +1219,16 @@ mod tests {
             let re = Regex::new(r"\x1b\[[0-9;]*m").unwrap();
             re.replace_all(s, "").to_string()
         };
-        assert_eq!(strip(&lines[0]), "feature/my-branch [change: abc12345]");
-        assert_eq!(strip(&lines[1]), "└── dev [change: def67890]");
-        assert_eq!(strip(&lines[2]), "    └── main [change: ghi11111]");
+        assert_eq!(strip(&lines[0]), "🌿 feature/my-branch [change: abc12345]");
+        assert_eq!(strip(&lines[1]), "└── 🌿 dev [change: def67890]");
+        assert_eq!(strip(&lines[2]), "    └── 🪵 main [change: main1234]");
     }
 
     #[test]
     fn test_build_tree_lines_unbookmarked() {
         let mock_bases = |branch: &str| -> Option<String> {
             match branch {
+                "wip" => Some("@".to_string()),
                 "@" => Some("main".to_string()),
                 "main" => None,
                 _ => None,
@@ -1154,20 +1237,21 @@ mod tests {
 
         let mock_formatter = |branch: &str| -> String {
             match branch {
-                "@" => "(un-bookmarked) [change: kkmvxyvr]".to_string(),
-                "main" => "main [change: zzzzzzzz]".to_string(),
+                "wip" => "wip [change: wip12345]".to_string(),
+                "@" => "(un-bookmarked) [change: at123456]".to_string(),
+                "main" => "main [change: main1234]".to_string(),
                 _ => branch.to_string(),
             }
         };
 
-        let lines = build_tree_lines_with_formatter("@", mock_bases, mock_formatter);
-        assert_eq!(lines.len(), 2);
+        let lines = build_tree_lines_with_formatter("wip", mock_bases, mock_formatter);
+        assert_eq!(lines.len(), 3);
         let strip = |s: &str| -> String {
             let re = Regex::new(r"\x1b\[[0-9;]*m").unwrap();
             re.replace_all(s, "").to_string()
         };
-        assert_eq!(strip(&lines[0]), "(un-bookmarked) [change: kkmvxyvr]");
-        assert_eq!(strip(&lines[1]), "└── main [change: zzzzzzzz]");
+        assert_eq!(strip(&lines[0]), "🌿 wip [change: wip12345]");
+        assert_eq!(strip(&lines[1]), "└── 🌿 (un-bookmarked) [change: at123456]");
+        assert_eq!(strip(&lines[2]), "    └── 🪵 main [change: main1234]");
     }
 }
-
