@@ -269,6 +269,62 @@ enum Commands {
         /// Shell to generate completions for
         shell: Shell,
     },
+
+    /// Show branch health report (base, ahead/behind, staleness, diff stat)
+    Status {
+        /// Target branch (defaults to current branch)
+        branch: Option<String>,
+
+        /// Emit JSON instead of human-readable output
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+fn human_age(secs: u64) -> String {
+    if secs < 60 {
+        "just now".to_string()
+    } else if secs < 3600 {
+        let m = secs / 60;
+        if m == 1 {
+            "~1 minute ago".to_string()
+        } else {
+            format!("~{} minutes ago", m)
+        }
+    } else if secs < 86400 {
+        let h = secs / 3600;
+        if h == 1 {
+            "~1 hour ago".to_string()
+        } else {
+            format!("~{} hours ago", h)
+        }
+    } else {
+        let d = secs / 86400;
+        if d == 1 {
+            "~1 day ago".to_string()
+        } else {
+            format!("~{} days ago", d)
+        }
+    }
+}
+
+fn parse_diff_shortstat(output: &str) -> (usize, usize, usize) {
+    let mut words = output.split_whitespace().peekable();
+    let mut files = 0usize;
+    let mut insertions = 0usize;
+    let mut deletions = 0usize;
+    while let Some(word) = words.next() {
+        if let Some(next) = words.peek() {
+            if next.starts_with("file") {
+                files = word.parse().unwrap_or(0);
+            } else if next.starts_with("insertion") {
+                insertions = word.parse().unwrap_or(0);
+            } else if next.starts_with("deletion") {
+                deletions = word.parse().unwrap_or(0);
+            }
+        }
+    }
+    (files, insertions, deletions)
 }
 
 fn format_branch_name_with_pattern(
@@ -773,6 +829,246 @@ fn handle_log(
     }
 
     Ok(())
+}
+
+struct StatusStats {
+    ahead: usize,
+    behind: usize,
+    last_synced_secs_ago: Option<u64>,
+    files: usize,
+    insertions: usize,
+    deletions: usize,
+}
+
+fn handle_status(branch: Option<&str>, json: bool) -> Result<()> {
+    let mode = VcsMode::detect();
+    let target = match branch {
+        Some(b) => b.to_string(),
+        None => match mode {
+            VcsMode::Git => current_branch()?,
+            VcsMode::Jj => get_current_jj_bookmark_or_at(),
+        },
+    };
+
+    let on_trunk = match mode {
+        VcsMode::Git => target == get_git_default_branch(),
+        VcsMode::Jj => is_jj_trunk(&target),
+    };
+
+    if on_trunk {
+        if json {
+            println!(
+                r#"{{"branch": {:?}, "base": null, "ahead": 0, "behind": 0, "stale": false, "last_synced_secs_ago": null, "diff_stat": null, "on_trunk": true}}"#,
+                target
+            );
+        } else {
+            println!(
+                "🪵 You are on the trunk branch ({}) — no base applies.",
+                target.green()
+            );
+        }
+        return Ok(());
+    }
+
+    let base = match get_base(Some(&target)) {
+        Ok(b) => b,
+        Err(_) => {
+            if json {
+                println!(
+                    r#"{{"branch": {:?}, "base": null, "ahead": 0, "behind": 0, "stale": false, "last_synced_secs_ago": null, "diff_stat": null, "on_trunk": false, "warning": "No base recorded. Run: branch-buddy set-base <base>"}}"#,
+                    target
+                );
+            } else {
+                println!("⚠ No base recorded for {}.", target.green());
+                println!("   Run: {} <base>", "branch-buddy set-base".cyan());
+            }
+            return Ok(());
+        }
+    };
+
+    let stats = match mode {
+        VcsMode::Git => git_status_stats(&target, &base)?,
+        VcsMode::Jj => jj_status_stats(&target, &base)?,
+    };
+    let stale = stats.behind > 0;
+
+    if json {
+        println!(
+            r#"{{"branch": {:?}, "base": {:?}, "ahead": {}, "behind": {}, "stale": {}, "last_synced_secs_ago": {}, "diff_stat": {}, "on_trunk": false}}"#,
+            target,
+            base,
+            stats.ahead,
+            stats.behind,
+            stale,
+            opt_u64_json(stats.last_synced_secs_ago),
+            diff_stat_json(stats.files, stats.insertions, stats.deletions)
+        );
+    } else {
+        println!("🌿 Branch:  {}", target.green());
+        println!(
+            "🌱 Base:    {} {}",
+            base.blue(),
+            format_last_synced(stats.last_synced_secs_ago).dimmed()
+        );
+        println!("📦 Commits: {} ahead of base", stats.ahead);
+        println!();
+        if stale {
+            let commit_word = if stats.behind == 1 { "commit" } else { "commits" };
+            println!(
+                "⚠  Base has moved: {} is {} {} ahead of your branch point.",
+                base.yellow(),
+                stats.behind,
+                commit_word
+            );
+            let cmd = match mode {
+                VcsMode::Git => format!("git rebase {}", base),
+                VcsMode::Jj => format!("jj rebase -s {} -d {}", target, base),
+            };
+            println!("   Run: {}", cmd.cyan());
+        } else {
+            println!("✓  Base is current. No rebase needed.");
+        }
+        println!();
+        let file_word = if stats.files == 1 { "file" } else { "files" };
+        println!(
+            "Files changed vs base: {} {}, +{} -{} lines",
+            stats.files, file_word, stats.insertions, stats.deletions
+        );
+    }
+
+    Ok(())
+}
+
+fn git_status_stats(target: &str, base: &str) -> Result<StatusStats> {
+    let ahead = run_git_count(&format!("{}..{}", base, target))?;
+    let behind = run_git_count(&format!("{}..{}", target, base))?;
+    let merge_base = run_git_output(&["merge-base", target, base])?;
+    let last_synced = run_git_output(&["log", "-1", "--format=%ct", &merge_base])
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok());
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let last_synced = last_synced.map(|ts| now.saturating_sub(ts));
+    let shortstat = run_git_output(&["diff", "--shortstat", &format!("{}..{}", base, target)])?;
+    let (files, insertions, deletions) = parse_diff_shortstat(&shortstat);
+    Ok(StatusStats {
+        ahead,
+        behind,
+        last_synced_secs_ago: last_synced,
+        files,
+        insertions,
+        deletions,
+    })
+}
+
+fn jj_status_stats(target: &str, base: &str) -> Result<StatusStats> {
+    let ahead = count_jj_revset(&format!("{}..{}", base, target));
+    let behind = count_jj_revset(&format!("{}..{}", target, base));
+
+    let merge_base = run_jj_output(&[
+        "log",
+        "-r",
+        &format!("fork_point({} | {})", target, base),
+        "--no-graph",
+        "-T",
+        "commit_id",
+    ])?;
+    let last_synced = run_git_output(&["log", "-1", "--format=%ct", &merge_base])
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok());
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let last_synced = last_synced.map(|ts| now.saturating_sub(ts));
+
+    let base_commit = run_jj_output(&["log", "-r", base, "--no-graph", "-T", "commit_id"])?;
+    let target_commit =
+        run_jj_output(&["log", "-r", target, "--no-graph", "-T", "commit_id"])?;
+    let shortstat = run_git_output(&[
+        "diff",
+        "--shortstat",
+        &format!("{}..{}", base_commit, target_commit),
+    ])?;
+    let (files, insertions, deletions) = parse_diff_shortstat(&shortstat);
+    Ok(StatusStats {
+        ahead,
+        behind,
+        last_synced_secs_ago: last_synced,
+        files,
+        insertions,
+        deletions,
+    })
+}
+
+fn run_git_count(range: &str) -> Result<usize> {
+    let output = Command::new("git")
+        .args(["rev-list", "--count", range])
+        .output()
+        .context("Failed to run git rev-list")?;
+    if !output.status.success() {
+        return Err(anyhow!("Failed to count commits for range '{}'", range));
+    }
+    String::from_utf8(output.stdout)?
+        .trim()
+        .parse::<usize>()
+        .context("Failed to parse git rev-list count")
+}
+
+fn run_git_output(args: &[&str]) -> Result<String> {
+    let output = Command::new("git")
+        .args(args)
+        .output()
+        .with_context(|| format!("Failed to run git {:?}", args))?;
+    if !output.status.success() {
+        return Err(anyhow!("git command failed: {:?}", args));
+    }
+    Ok(String::from_utf8(output.stdout)?.trim().to_string())
+}
+
+fn run_jj_output(args: &[&str]) -> Result<String> {
+    let output = Command::new("jj")
+        .args(args)
+        .output()
+        .with_context(|| format!("Failed to run jj {:?}", args))?;
+    if !output.status.success() {
+        return Err(anyhow!("jj command failed: {:?}", args));
+    }
+    Ok(String::from_utf8(output.stdout)?.trim().to_string())
+}
+
+fn count_jj_revset(revset: &str) -> usize {
+    let output = Command::new("jj").args(["log", "-r", revset, "--no-graph"]).output();
+    match output {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .count(),
+        _ => 0,
+    }
+}
+
+fn format_last_synced(secs_ago: Option<u64>) -> String {
+    match secs_ago {
+        Some(s) => format!("(last synced {})", human_age(s)),
+        None => "(last synced unknown)".to_string(),
+    }
+}
+
+fn opt_u64_json(opt: Option<u64>) -> String {
+    match opt {
+        Some(v) => v.to_string(),
+        None => "null".to_string(),
+    }
+}
+
+fn diff_stat_json(files: usize, insertions: usize, deletions: usize) -> String {
+    format!(
+        r#"{{"files": {}, "insertions": {}, "deletions": {}}}"#,
+        files, insertions, deletions
+    )
 }
 
 fn get_current_jj_bookmark_or_at() -> String {
@@ -1516,6 +1812,9 @@ fn main() -> Result<()> {
         } => {
             handle_log(branch.as_deref(), *stack, *stat, *limit)?;
         }
+        Commands::Status { branch, json } => {
+            handle_status(branch.as_deref(), *json)?;
+        }
         Commands::Init {
             global,
             force,
@@ -1746,6 +2045,26 @@ mod tests {
     }
 
     #[test]
+    fn test_status_cli_parsing() {
+        let cli =
+            Cli::try_parse_from(["branch-buddy", "status", "feature-x", "--json"]).unwrap();
+        if let Commands::Status { branch, json } = cli.command {
+            assert_eq!(branch, Some("feature-x".to_string()));
+            assert!(json);
+        } else {
+            panic!("Expected Commands::Status");
+        }
+
+        let cli_default = Cli::try_parse_from(["branch-buddy", "status"]).unwrap();
+        if let Commands::Status { branch, json } = cli_default.command {
+            assert_eq!(branch, None);
+            assert!(!json);
+        } else {
+            panic!("Expected Commands::Status");
+        }
+    }
+
+    #[test]
     fn test_config_partial_deserialization() {
         let toml_str = r#"
         [naming]
@@ -1912,6 +2231,29 @@ mod tests {
             ),
             "AUTH-101_login-flow"
         );
+    }
+
+    #[test]
+    fn test_human_age() {
+        assert_eq!(human_age(30), "just now");
+        assert_eq!(human_age(90), "~1 minute ago");
+        assert_eq!(human_age(7200), "~2 hours ago");
+        assert_eq!(human_age(259200), "~3 days ago");
+    }
+
+    #[test]
+    fn test_parse_diff_shortstat() {
+        assert_eq!(
+            parse_diff_shortstat(" 12 files changed, 340 insertions(+), 87 deletions(-)"),
+            (12, 340, 87)
+        );
+        // Only insertions
+        assert_eq!(
+            parse_diff_shortstat(" 3 files changed, 10 insertions(+)"),
+            (3, 10, 0)
+        );
+        // Empty
+        assert_eq!(parse_diff_shortstat(""), (0, 0, 0));
     }
 }
 
