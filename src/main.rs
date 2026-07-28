@@ -1861,6 +1861,45 @@ mod tests {
             format_branch_name_with_pattern(None, Some("feat"), Some("X-1"), "foo", "/", "-"),
             "feat/X-1-foo"
         );
+
+        // Custom separators: underscore-based pattern, all tags present
+        assert_eq!(
+            format_branch_name_with_pattern(
+                Some("{type}_{ticket}_{slug}"),
+                Some("feature"),
+                Some("AUTH-101"),
+                "login-flow",
+                "_",
+                "_",
+            ),
+            "feature_AUTH-101_login-flow"
+        );
+
+        // Custom separators: underscore, missing ticket — orphaned "_" should be cleaned
+        assert_eq!(
+            format_branch_name_with_pattern(
+                Some("{type}_{ticket}_{slug}"),
+                Some("feature"),
+                None,
+                "login-flow",
+                "_",
+                "_",
+            ),
+            "feature_login-flow"
+        );
+
+        // Custom separators: underscore, missing type — leading "_" should be trimmed
+        assert_eq!(
+            format_branch_name_with_pattern(
+                Some("{type}_{ticket}_{slug}"),
+                None,
+                Some("AUTH-101"),
+                "login-flow",
+                "_",
+                "_",
+            ),
+            "AUTH-101_login-flow"
+        );
     }
 }
 
