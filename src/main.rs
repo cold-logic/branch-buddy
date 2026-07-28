@@ -478,6 +478,30 @@ fn print_tree_with_mode(branch: Option<&str>, no_legend: bool, mode: VcsMode) ->
     Ok(())
 }
 
+fn get_git_default_branch() -> String {
+    // 1. Try remote HEAD (origin/HEAD)
+    if let Ok(output) = Command::new("git")
+        .args(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
+        .output()
+        && output.status.success()
+    {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let name = stdout.trim();
+        if !name.is_empty() {
+            return name.strip_prefix("origin/").unwrap_or(name).to_string();
+        }
+    }
+
+    // 2. Fall back to checking common default local branch refs
+    for candidate in ["main", "master", "development", "dev", "trunk"] {
+        if ref_exists(candidate) {
+            return candidate.to_string();
+        }
+    }
+
+    "main".to_string()
+}
+
 fn get_jj_trunk_name() -> String {
     if let Ok(output) = Command::new("jj")
         .args(["log", "-r", "trunk()", "--no-graph", "-T", "local_bookmarks"])
@@ -510,7 +534,7 @@ fn handle_log(
     };
 
     let base = get_base(Some(&target)).unwrap_or_else(|_| match mode {
-        VcsMode::Git => "main".to_string(),
+        VcsMode::Git => get_git_default_branch(),
         VcsMode::Jj => get_jj_trunk_name(),
     });
 
@@ -521,11 +545,8 @@ fn handle_log(
 
     match mode {
         VcsMode::Git => {
-            let range = if stack {
-                format!("main..{}", target)
-            } else {
-                format!("{}..{}", base, target)
-            };
+            let root_base = if stack { get_git_default_branch() } else { base.clone() };
+            let range = format!("{}..{}", root_base, target);
             let mut args = vec!["log", &range, "--oneline", "--color=always"];
             let limit_str = limit.map(|n| n.to_string());
             if let Some(ref l) = limit_str {
