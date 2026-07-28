@@ -263,6 +263,62 @@ enum Commands {
     },
 }
 
+fn format_branch_name_with_pattern(
+    pattern: Option<&str>,
+    r#type: Option<&str>,
+    ticket: Option<&str>,
+    slug: &str,
+    prefix_sep: &str,
+    ticket_sep: &str,
+) -> String {
+    let template = pattern.unwrap_or("{type}/{ticket}-{slug}");
+    let mut result = template.to_string();
+
+    if let Some(t) = r#type {
+        result = result.replace("{type}", t);
+    } else {
+        result = result.replace("{type}", "");
+    }
+
+    if let Some(id) = ticket {
+        result = result.replace("{ticket}", id);
+    } else {
+        result = result.replace("{ticket}", "");
+    }
+
+    result = result.replace("{slug}", slug);
+
+    // Collapse same-separator doubles (e.g. "//" → "/", "--" → "-")
+    let double_prefix = format!("{}{}", prefix_sep, prefix_sep);
+    let double_ticket = format!("{}{}", ticket_sep, ticket_sep);
+    while !prefix_sep.is_empty() && result.contains(&double_prefix) {
+        result = result.replace(&double_prefix, prefix_sep);
+    }
+    while !ticket_sep.is_empty() && result.contains(&double_ticket) {
+        result = result.replace(&double_ticket, ticket_sep);
+    }
+
+    // Collapse cross-separator adjacency from empty tag substitutions (e.g. "/-" → "/", "-/" → "/")
+    if !prefix_sep.is_empty() && !ticket_sep.is_empty() {
+        let prefix_then_ticket = format!("{}{}", prefix_sep, ticket_sep);
+        let ticket_then_prefix = format!("{}{}", ticket_sep, prefix_sep);
+        result = result.replace(&prefix_then_ticket, prefix_sep);
+        result = result.replace(&ticket_then_prefix, prefix_sep);
+    }
+
+    let trimmed = result
+        .trim_start_matches(prefix_sep)
+        .trim_start_matches(ticket_sep)
+        .trim_end_matches(prefix_sep)
+        .trim_end_matches(ticket_sep);
+
+    if trimmed.is_empty() {
+        slug.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 fn current_branch() -> Result<String> {
     let check_repo = Command::new("git")
         .args(["rev-parse", "--is-inside-work-tree"])
@@ -886,12 +942,15 @@ fn new_branch_with_mode(
 
             let slug = slugify(title, max_len);
 
-            let mut branch_name = match (r#type, ticket) {
-                (Some(t), Some(id)) => format!("{}{}{}{}{}", t, prefix_sep, id, ticket_sep, slug),
-                (Some(t), None) => format!("{}{}{}", t, prefix_sep, slug),
-                (None, Some(id)) => format!("{}{}{}", id, ticket_sep, slug),
-                (None, None) => slug,
-            };
+            let pattern_tmpl = config.naming.as_ref().and_then(|n| n.pattern.as_deref());
+            let mut branch_name = format_branch_name_with_pattern(
+                pattern_tmpl,
+                r#type,
+                ticket,
+                &slug,
+                prefix_sep,
+                ticket_sep,
+            );
 
             if branch_exists(&branch_name) {
                 if fail_if_exists {
@@ -965,12 +1024,15 @@ fn new_branch_with_mode(
 
             let slug = slugify(title, max_len);
 
-            let mut branch_name = match (r#type, ticket) {
-                (Some(t), Some(id)) => format!("{}{}{}{}{}", t, prefix_sep, id, ticket_sep, slug),
-                (Some(t), None) => format!("{}{}{}", t, prefix_sep, slug),
-                (None, Some(id)) => format!("{}{}{}", id, ticket_sep, slug),
-                (None, None) => slug,
-            };
+            let pattern_tmpl = config.naming.as_ref().and_then(|n| n.pattern.as_deref());
+            let mut branch_name = format_branch_name_with_pattern(
+                pattern_tmpl,
+                r#type,
+                ticket,
+                &slug,
+                prefix_sep,
+                ticket_sep,
+            );
 
             if branch_exists(&branch_name) || jj_bookmark_exists(&branch_name) {
                 if fail_if_exists {
@@ -1732,6 +1794,73 @@ mod tests {
         } else {
             panic!("Expected Commands::Init");
         }
+    }
+
+    #[test]
+    fn test_format_branch_name_with_pattern() {
+        // Full: type + ticket + slug
+        assert_eq!(
+            format_branch_name_with_pattern(
+                Some("{type}/{ticket}-{slug}"),
+                Some("feature"),
+                Some("AUTH-101"),
+                "login-flow",
+                "/",
+                "-",
+            ),
+            "feature/AUTH-101-login-flow"
+        );
+
+        // Missing ticket: orphaned separator cleaned
+        assert_eq!(
+            format_branch_name_with_pattern(
+                Some("{type}/{ticket}-{slug}"),
+                Some("feature"),
+                None,
+                "login-flow",
+                "/",
+                "-",
+            ),
+            "feature/login-flow"
+        );
+
+        // Missing type: orphaned separator cleaned
+        assert_eq!(
+            format_branch_name_with_pattern(
+                Some("{type}/{ticket}-{slug}"),
+                None,
+                Some("AUTH-101"),
+                "login-flow",
+                "/",
+                "-",
+            ),
+            "AUTH-101-login-flow"
+        );
+
+        // Custom pattern order
+        assert_eq!(
+            format_branch_name_with_pattern(
+                Some("{ticket}/{type}-{slug}"),
+                Some("feature"),
+                Some("JIRA-99"),
+                "fix-bug",
+                "/",
+                "-",
+            ),
+            "JIRA-99/feature-fix-bug"
+        );
+
+        // Slug only
+        assert_eq!(
+            format_branch_name_with_pattern(Some("{slug}"), None, None, "my-branch", "/", "-"),
+            "my-branch"
+        );
+
+        // No pattern (uses default)
+        assert_eq!(
+            format_branch_name_with_pattern(None, Some("feat"), Some("X-1"), "foo", "/", "-"),
+            "feat/X-1-foo"
+        );
     }
 }
 
