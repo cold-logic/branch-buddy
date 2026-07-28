@@ -2,7 +2,7 @@
 
 **Branch Buddy** is a lightweight Git & Jujutsu (`jj`) companion CLI that brings persistent parent/base branch metadata to your local version control workflows, while making branch/bookmark creation from human-readable titles completely effortless.
 
-Git and Jujutsu don't naturally record explicit parent/base branch relationships across stacked features. Branch Buddy fixes this by storing persistent `branch.<name>.base` records in local `.git/config` at the moment of branch/bookmark creation, giving you full lineage tracking, ancestry tree visualization, and focused commit logs across both Git and Jujutsu repositories.
+Git does not naturally record explicit parent/base branch metadata—it only tracks a commit graph. While Jujutsu natively tracks commit parentage in a DAG, managing named branch/bookmark lineage metadata across Git and Jujutsu can still be cumbersome. Branch Buddy bridges this gap by persistently storing `branch.<name>.base` records in `.git/config` at the moment of branch/bookmark creation, giving you uniform lineage tracking, ancestry tree visualization, and focused commit logs across both Git and Jujutsu environments.
 
 ---
 
