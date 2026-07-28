@@ -6,12 +6,14 @@ use regex::Regex;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VcsMode {
     Git,
     Jj,
 }
 
+#[allow(dead_code)]
 impl VcsMode {
     pub fn detect() -> Self {
         let current_dir =
@@ -771,6 +773,8 @@ mod tests {
 
     #[test]
     fn test_vcs_mode_detection() {
+        let _detected = VcsMode::detect();
+
         let unique_id = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
