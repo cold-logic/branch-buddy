@@ -1,59 +1,71 @@
 # Branch Buddy 🌳🤝
 
-**Branch Buddy** is a lightweight Git companion CLI that brings first-class parent/base branch metadata to your local Git workflows, while also making branch creation from human-readable titles completely effortless.
+**Branch Buddy** is a lightweight Git & Jujutsu (`jj`) companion CLI that brings persistent parent/base branch metadata to your local version control workflows, while making branch/bookmark creation from human-readable titles completely effortless.
 
-Git does not naturally remember which branch another branch was created from—it only tracks commit history. Branch Buddy fixes this by persistently storing a `branch.<name>.base` record in your local `.git/config` at the moment of branch creation.
+Git and Jujutsu don't naturally record explicit parent/base branch relationships across stacked features. Branch Buddy fixes this by storing persistent `branch.<name>.base` records in local `.git/config` at the moment of branch/bookmark creation, giving you full lineage tracking, ancestry tree visualization, and focused commit logs across both Git and Jujutsu repositories.
 
-## Features
+---
 
-- 🧠 **Persistent Base Metadata**: Never forget where a branch originated. Branch Buddy explicitly tracks parent branch relationships natively in `.git/config`.
-- 🗣️ **Human-Friendly Naming**: Just type `"Fix user signup flow"` and let Branch Buddy generate the safe slug `fix-user-signup-flow`.
-- 🎨 **Beautiful & Interactive UX**: Enjoy colorful outputs, fun emojis, and interactive fuzzy-select dropdowns when things get ambiguous.
-- 🌲 **Ancestry Trees**: Visualize your stacked branches instantly with `branch-buddy tree`.
-- 🔮 **Legacy Guessing**: Use built-in heuristics (`merge-base`) to automatically retroactively guess bases for branches created before you installed Branch Buddy.
-- 🪝 **Hook Friendly**: Designed to fit seamlessly into Git `post-checkout` hooks for completely transparent operation.
+## 🌟 Key Features
 
-## Installation
+- 🧠 **Persistent Base Metadata**: Never forget where a branch originated. Branch Buddy explicitly tracks parent branch relationships in `.git/config`.
+- 🦎 **Dual Engine Support (Git + Jujutsu `jj`)**: Seamlessly auto-detects Jujutsu (`.jj`) or Git environments. In Jujutsu mode, it creates changes, attaches bookmarks, formats Change IDs (`[change: <id>]`), and dynamically resolves `trunk()`.
+- 🗣️ **Human-Friendly Naming**: Just type `"Fix user signup flow"` and Branch Buddy generates clean, unique branch slugs (`fix-user-signup-flow` or `feature/AUTH-101-fix-user-signup-flow`).
+- 🌳 **Ancestry Trees (`branch-buddy tree`)**: Visualize stacked branches and bookmarks with clear parent-child lineages, feature icons (🌿), and dynamic trunk indicators (🪵).
+- 🪵 **Focused Stack Logs (`branch-buddy log`)**: View noise-free commit history between your branch and its base (`base..@`), or pass `--stack` to view changes across all parent branches up to `trunk()`.
+- 🔮 **Legacy Guessing (`branch-buddy guess-base`)**: Automatically estimate bases for legacy branches created before installing Branch Buddy.
+- 🩺 **Health Checks (`branch-buddy doctor`)**: Diagnose and heal broken or orphaned base-branch chains when parent branches are deleted.
 
-### Default Installation
+---
 
-You can install the latest version of Branch Buddy directly from GitHub using Cargo:
+## 📦 Installation
+
+### Default Installation (via Cargo)
+
+Install the latest release directly from GitHub:
 
 ```bash
 cargo install --git https://github.com/cold-logic/branch-buddy
 ```
 
-### Local Development
+### Local Installation
 
-If you want to install, build, or compile your own variant, you can clone the repository and install it locally:
+Clone and install locally:
 
 ```bash
 cargo install --path .
 ```
 
-## Quick Start (Git Aliases)
+---
 
-Branch Buddy is designed to feel like a native extension of Git. To get the best experience, add these aliases to your global `~/.gitconfig`:
+## 🚀 Quick Start (Git & Jujutsu Aliases)
+
+Branch Buddy feels like a native extension of Git and Jujutsu.
+
+### Git Aliases (`~/.gitconfig`)
 
 ```ini
 [alias]
   # Create a branch from human-readable title (base = current branch)
   bb = "!branch-buddy new"
 
-  # Conventional feature branch off main
-  cobb = "!f() { branch-buddy new \"$1\" --base main --type feature; }; f"
+  # Conventional feature branch off main/development
+  cobb = "!f() { branch-buddy new \"$1\" --type feature; }; f"
 
-  # Base operations
+  # Base operations & ancestry tree
   base-branch = "!branch-buddy get-base"
   set-base = "!branch-buddy set-base"
   tree = "!branch-buddy tree"
+  bblog = "!branch-buddy log"
 ```
 
-## Usage
+---
 
-### Creating Branches
+## 🛠️ Usage
 
-Use the `new` command to create branches from human-readable sentences. It will automatically slugify the title, make sure it is unique, check out the branch, and set the base branch.
+### 1. Creating Branches & Bookmarks (`new`)
+
+Create branches from human-readable titles. Branch Buddy automatically slugifies the title, ensures uniqueness, and saves the base metadata.
 
 ```bash
 $ branch-buddy new "Improve search UX" --type feature --ticket TKT-123
@@ -61,122 +73,93 @@ $ branch-buddy new "Improve search UX" --type feature --ticket TKT-123
 🌱 Base: main
 ```
 
+**Jujutsu (`jj`) Repositories:**
+In a `jj` repo, `branch-buddy new` creates a new change (`jj new <base> -m "<title>"`), creates a matching `jj bookmark`, and sets base metadata automatically.
+
 **Options:**
-- `--base <branch>`: The base branch (defaults to the branch you are currently on).
-- `--type <type>`: Add a prefix (e.g., `feature`, `bugfix`).
-- `--ticket <id>`: Add an issue tracker ID.
-- `--dry-run`: See the slugified name without actually creating the branch.
-- `--no-checkout`: Create the branch but stay on your current branch.
+- `--base <branch>`: Explicit base branch (defaults to current branch/bookmark).
+- `--type <type>`: Prefix (e.g. `feature`, `bugfix`).
+- `--ticket <id>`: Issue tracker ID (e.g. `AUTH-101`).
+- `--dry-run`: View slug without creating the branch/bookmark.
+- `--no-checkout`: Create branch without switching your working copy.
 
-### Detached HEAD & Jujutsu Support
+---
 
-If you run `branch-buddy new` while in a **detached HEAD** state (e.g., when checking out a specific commit or when using tools like [Jujutsu `jj`](https://github.com/martinvonz/jj)), Branch Buddy won't just fail! 
+### 2. Ancestry Tree Visualization (`tree`)
 
-Instead, it dynamically queries all your local branches, ranks them by distance to your current commit, and opens a sleek interactive fuzzy-select menu (with the closest match pre-selected) so you can effortlessly select the correct base.
-
-```bash
-$ branch-buddy new 'my-cool-idea'
-⚠️ Currently in detached HEAD. Resolving base branch...
-? Select base branch for metadata (closest match pre-selected) ›
-❯ main
-  feature/shopping-cart
-  develop
-```
-
-### Viewing the Branch Hierarchy Tree
-
-Working with stacked branches? View the lineage of your current branch back to `main`:
+Inspect stacked branches and their parent lineage:
 
 ```bash
 $ branch-buddy tree
-feature/TKT-123-improve-search-ux
-└── dev
-    └── main
+🌳 Branch Ancestry (child → parent base):
+🌿 bugfix/AUTH-103-token-refresh-fix [change: oypsursxmvlr]
+└── 🌿 feature/AUTH-102-oauth2-google-support [change: tsylmxxwtpyq]
+    └── 🌿 feature/AUTH-101-feature-auth-api [change: nvqxrpwvlywn]
+        └── 🪵 main [change: tpvkxmlqzusl]
+
+Legend: 🌿 Branch/Feature | 🪵 Trunk/Main Target
 ```
 
-### Getting and Setting Base Branches
+*Pass `--no-legend` to suppress the legend at the bottom.*
 
-Check the base of the current branch:
+---
+
+### 3. Focused Stack Commits Log (`log`)
+
+View commits on your current feature branch relative to its base:
+
+```bash
+$ branch-buddy log
+🪵 Log for feature/TKT-123-improve-search-ux (base: development):
+5ca2075 [ztnsmvzo] feat(search): optimize query performance (TKT-123) (Dev User)
+```
+
+**Options:**
+- `--stack` / `--all-ancestors`: Show commits across all stacked parent branches up to `trunk()`.
+- `--stat`: Include diff file statistics for each commit.
+- `-n <limit>` / `--limit <limit>`: Limit the number of displayed commits.
+
+---
+
+### 4. Managing Base Branch Metadata
+
+Check current base:
 ```bash
 $ branch-buddy get-base
-main
+development
 ```
 
-Explicitly override or set a base branch metadata:
+Override or update base branch metadata:
 ```bash
-$ branch-buddy set-base dev
+$ branch-buddy set-base development
+🔗 Set base of feature/TKT-123-improve-search-ux to development
 ```
 
-### Guessing Legacy Branches
-
-If you have older branches from before you started using Branch Buddy, you can use the `guess-base` command. It uses Git's commit history and `merge-base` distance to find the closest match among candidates:
-
+Guess base for legacy branches:
 ```bash
-$ branch-buddy guess-base --candidates main,master,develop --write
-🔮 Guessed base: main
-💾 Saved base main for branch old-feature
+$ branch-buddy guess-base --write
+🔮 Guessed base: development
+💾 Saved base development for branch old-feature
 ```
 
-### Health Checks & Healing (Doctor)
+---
 
-If you manually delete an ancestor branch, the "chain" of base branches breaks. You can triage and fix orphaned branches using the `doctor` (or `fsck`) command:
+### 5. Health Checks & Healing (`doctor`)
+
+Check repository for broken or deleted parent branches:
 
 ```bash
 $ branch-buddy doctor
-⚠️  Branch 'feature/b' points to missing base 'feature/a'
+⚠️ Branch 'feature/b' points to missing base 'feature/a'
 
 Found 1 broken link(s). Run `branch-buddy doctor --fix` to auto-heal them.
 ```
 
-When you pass the `--fix` flag, Branch Buddy will automatically re-run the `merge-base` heuristics to map orphaned branches to their closest living ancestors!
+Run `branch-buddy doctor --fix` to automatically heal broken parent links using merge-base and ancestry distance heuristics.
 
-## Git Hook Integration
+---
 
-You can automate tracking by adding a `.git/hooks/post-checkout` file. This ensures that even if you create a branch using a standard `git checkout -b` or via your IDE, Branch Buddy will attempt to annotate it the first time you switch to it.
+## 📄 License
 
-You can install this hook automatically by running:
-
-```bash
-$ branch-buddy install
-```
-
-If you *also* want the hook to perform an automatic health check (warning you if the current branch's base has been deleted), you can opt into that feature using:
-
-```bash
-$ branch-buddy doctor --install-hook
-```
-
-This will safely install the following `post-checkout` hook:
-
-```bash
-#!/bin/bash
-# post-checkout
-
-# Flag 1 means a branch checkout (not a file checkout)
-if [ "$3" != "1" ]; then exit 0; fi
-
-# Get current branch
-curr=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
-if [ "$curr" == "HEAD" ]; then exit 0; fi
-
-# If the current branch has a base, but that base branch was deleted, warn the user
-base=$(branch-buddy get-base "$curr" 2>/dev/null)
-if [ -n "$base" ] && ! git show-ref --verify --quiet "refs/heads/$base"; then
-    echo "⚠️  Base branch '$base' is missing! Run 'branch-buddy doctor --fix' to heal it."
-fi
-
-# If base is already set, do nothing
-if branch-buddy has-base "$curr" >/dev/null 2>&1; then
-    exit 0
-fi
-
-# Try to determine the previous branch name
-prev_branch=$(git rev-parse --abbrev-ref @{-1} 2>/dev/null)
-
-if [ -n "$prev_branch" ] && [ "$prev_branch" != "HEAD" ]; then
-    branch-buddy set-base "$prev_branch" "$curr" >/dev/null 2>&1
-fi
-```
-
-## License
 MIT
+
