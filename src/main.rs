@@ -247,6 +247,20 @@ enum Commands {
         #[arg(short = 'n', long)]
         limit: Option<usize>,
     },
+    /// Scaffold a new .branchbuddy.toml configuration file
+    Init {
+        /// Create global configuration file at ~/.config/branchbuddy/config.toml
+        #[arg(long)]
+        global: bool,
+
+        /// Overwrite existing configuration file if present
+        #[arg(short = 'f', long)]
+        force: bool,
+
+        /// Run interactive wizard to prompt for configuration options
+        #[arg(short = 'i', long)]
+        interactive: bool,
+    },
 }
 
 fn current_branch() -> Result<String> {
@@ -1292,6 +1306,76 @@ fn doctor(fix: bool, install_hook: bool) -> Result<()> {
     Ok(())
 }
 
+fn handle_init(global: bool, force: bool, interactive: bool) -> Result<()> {
+    let target_path = if global {
+        let home = dirs::home_dir().ok_or_else(|| anyhow!("Could not determine home directory"))?;
+        home.join(".config").join("branchbuddy").join("config.toml")
+    } else {
+        std::path::PathBuf::from(".branchbuddy.toml")
+    };
+
+    if target_path.exists() && !force {
+        return Err(anyhow!(
+            "Configuration file '{}' already exists. Use --force to overwrite.",
+            target_path.display()
+        ));
+    }
+
+    let content = if interactive {
+        use dialoguer::Input;
+
+        let pattern: String = Input::new()
+            .with_prompt("Naming pattern ({slug}, {type}, {ticket})")
+            .default("{type}/{ticket}-{slug}".into())
+            .interact_text()?;
+
+        let max_length: usize = Input::new()
+            .with_prompt("Maximum slug length")
+            .default(63)
+            .interact_text()?;
+
+        let default_base: String = Input::new()
+            .with_prompt("Default base branch")
+            .default("main".into())
+            .interact_text()?;
+
+        format!(
+            "# Branch Buddy Configuration\n\n[naming]\npattern = \"{}\"\nmax_length = {}\n\n[defaults]\nbase = \"{}\"\n\n[tree]\nno_legend = false\n",
+            pattern, max_length, default_base
+        )
+    } else {
+        r#"# Branch Buddy Configuration (.branchbuddy.toml)
+
+[naming]
+# Pattern template. Available tags: {slug}, {type}, {ticket}
+pattern = "{type}/{ticket}-{slug}"
+max_length = 63
+prefix_separator = "/"
+ticket_separator = "-"
+
+[defaults]
+# Default fallback base branch when --base is omitted
+base = "main"
+
+[tree]
+# Hide legend at bottom of tree view
+no_legend = false
+"#.to_string()
+    };
+
+    if let Some(parent) = target_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    std::fs::write(&target_path, content)?;
+    println!(
+        "✨ Created configuration file at {}",
+        target_path.display().to_string().green().bold()
+    );
+
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let config = Config::load(cli.config.as_deref());
@@ -1361,6 +1445,13 @@ fn main() -> Result<()> {
             limit,
         } => {
             handle_log(branch.as_deref(), *stack, *stat, *limit)?;
+        }
+        Commands::Init {
+            global,
+            force,
+            interactive,
+        } => {
+            handle_init(*global, *force, *interactive)?;
         }
     }
 
@@ -1624,6 +1715,23 @@ mod tests {
         base_config.merge(repo_config);
         assert_eq!(base_config.naming.as_ref().unwrap().max_length, Some(50));
         assert_eq!(base_config.tree.as_ref().unwrap().no_legend, Some(true));
+    }
+
+    #[test]
+    fn test_init_cli_parsing() {
+        let cli = Cli::try_parse_from(["branch-buddy", "init", "--global", "-f", "-i"]).unwrap();
+        if let Commands::Init {
+            global,
+            force,
+            interactive,
+        } = cli.command
+        {
+            assert!(global);
+            assert!(force);
+            assert!(interactive);
+        } else {
+            panic!("Expected Commands::Init");
+        }
     }
 }
 
