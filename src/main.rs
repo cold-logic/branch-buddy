@@ -131,6 +131,23 @@ enum Commands {
         #[arg(long)]
         install_hook: bool,
     },
+    /// Show focused commit log between branch and base (or stack)
+    Log {
+        /// Target branch (defaults to current branch)
+        branch: Option<String>,
+
+        /// Include commits across all parent base branches up to trunk()
+        #[arg(long, alias = "all-ancestors")]
+        stack: bool,
+
+        /// Show file diff statistics for each commit
+        #[arg(long)]
+        stat: bool,
+
+        /// Limit number of commits displayed
+        #[arg(short = 'n', long)]
+        limit: Option<usize>,
+    },
 }
 
 fn current_branch() -> Result<String> {
@@ -461,6 +478,79 @@ fn print_tree_with_mode(branch: Option<&str>, no_legend: bool, mode: VcsMode) ->
     Ok(())
 }
 
+fn handle_log(
+    branch: Option<&str>,
+    stack: bool,
+    stat: bool,
+    limit: Option<usize>,
+) -> Result<()> {
+    let mode = VcsMode::detect();
+    let target = match branch {
+        Some(b) => b.to_string(),
+        None => match mode {
+            VcsMode::Git => current_branch()?,
+            VcsMode::Jj => get_current_jj_bookmark_or_at(),
+        },
+    };
+
+    let base = get_base(Some(&target)).unwrap_or_else(|_| match mode {
+        VcsMode::Git => "main".to_string(),
+        VcsMode::Jj => "trunk()".to_string(),
+    });
+
+    println!(
+        "{}",
+        format!("🪵 Log for {} (base: {}):", target.green(), base.blue()).bold()
+    );
+
+    match mode {
+        VcsMode::Git => {
+            let range = if stack {
+                format!("main..{}", target)
+            } else {
+                format!("{}..{}", base, target)
+            };
+            let mut args = vec!["log", &range, "--oneline", "--color=always"];
+            let limit_str = limit.map(|n| n.to_string());
+            if let Some(ref l) = limit_str {
+                args.push("-n");
+                args.push(l);
+            }
+            if stat {
+                args.push("--stat");
+            }
+            let output = Command::new("git").args(args).output()?;
+            println!("{}", String::from_utf8_lossy(&output.stdout));
+        }
+        VcsMode::Jj => {
+            let revset = if stack {
+                format!("trunk()::({}) & ~trunk()", target)
+            } else {
+                format!("({})::({}) & ~({})", base, target, base)
+            };
+            let mut args = vec![
+                "log",
+                "-r",
+                &revset,
+                "--no-graph",
+                "-T",
+                r#"commit_id.short() ++ " [" ++ change_id.short() ++ "] " ++ description.first_line() ++ " (" ++ author.name() ++ ")\n""#,
+            ];
+            let limit_str = limit.map(|n| n.to_string());
+            if let Some(ref l) = limit_str {
+                args.push("-n");
+                args.push(l);
+            }
+            if stat {
+                args.push("--stat");
+            }
+            let output = Command::new("jj").args(args).output()?;
+            println!("{}", String::from_utf8_lossy(&output.stdout));
+        }
+    }
+
+    Ok(())
+}
 
 fn get_current_jj_bookmark_or_at() -> String {
     if let Ok(output) = Command::new("jj")
@@ -1085,6 +1175,14 @@ fn main() -> Result<()> {
         Commands::InstallHooks => {
             do_install_hook(false)?;
         }
+        Commands::Log {
+            branch,
+            stack,
+            stat,
+            limit,
+        } => {
+            handle_log(branch.as_deref(), *stack, *stat, *limit)?;
+        }
     }
 
     Ok(())
@@ -1253,5 +1351,51 @@ mod tests {
         assert_eq!(strip(&lines[0]), "🌿 wip [change: wip12345]");
         assert_eq!(strip(&lines[1]), "└── 🌿 (un-bookmarked) [change: at123456]");
         assert_eq!(strip(&lines[2]), "    └── 🪵 main [change: main1234]");
+    }
+
+    #[test]
+    fn test_log_revset_formatting() {
+        let base = "development";
+        let branch = "feature-x";
+        let git_range = format!("{}..{}", base, branch);
+        assert_eq!(git_range, "development..feature-x");
+
+        let jj_revset = format!("({})::({}) & ~({})", base, branch, base);
+        assert_eq!(jj_revset, "(development)::(feature-x) & ~(development)");
+    }
+
+    #[test]
+    fn test_log_cli_parsing() {
+        let cli = Cli::try_parse_from([
+            "branch-buddy",
+            "log",
+            "feature-x",
+            "--stack",
+            "--stat",
+            "-n",
+            "10",
+        ])
+        .unwrap();
+        if let Commands::Log {
+            branch,
+            stack,
+            stat,
+            limit,
+        } = cli.command
+        {
+            assert_eq!(branch, Some("feature-x".to_string()));
+            assert!(stack);
+            assert!(stat);
+            assert_eq!(limit, Some(10));
+        } else {
+            panic!("Expected Commands::Log");
+        }
+
+        let cli_alias = Cli::try_parse_from(["branch-buddy", "log", "--all-ancestors"]).unwrap();
+        if let Commands::Log { stack, .. } = cli_alias.command {
+            assert!(stack);
+        } else {
+            panic!("Expected Commands::Log");
+        }
     }
 }
