@@ -14,8 +14,19 @@ pub enum VcsMode {
 
 impl VcsMode {
     pub fn detect() -> Self {
+        let current_dir =
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        Self::detect_in_dir(&current_dir)
+    }
+
+    pub fn detect_in_dir(dir: &std::path::Path) -> Self {
+        if dir.join(".jj").is_dir() {
+            return VcsMode::Jj;
+        }
+
         let is_jj = Command::new("jj")
             .arg("root")
+            .current_dir(dir)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()
@@ -759,10 +770,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_vcs_mode_detection_fallback() {
-        // VcsMode::detect() should return Git or Jj without panicking
-        let mode = VcsMode::detect();
-        assert!(matches!(mode, VcsMode::Git | VcsMode::Jj));
+    fn test_vcs_mode_detection() {
+        let unique_id = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("bb_test_vcs_{}", unique_id));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        let mode_clean = VcsMode::detect_in_dir(&temp_dir);
+        assert_eq!(mode_clean, VcsMode::Git);
+
+        let jj_dir = temp_dir.join(".jj");
+        let _ = std::fs::create_dir(&jj_dir);
+        let mode_jj = VcsMode::detect_in_dir(&temp_dir);
+        assert_eq!(mode_jj, VcsMode::Jj);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
     #[test]
