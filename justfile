@@ -48,5 +48,5 @@ install-completions: completions
     cp completions/_branch-buddy ~/.zfunc/_branch-buddy
     @echo "✨ Zsh completions installed to ~/.zfunc/_branch-buddy"
     @echo "   Add to ~/.zshrc if not already present:"
-    @echo "     fpath=(~/.zfunc \$$fpath)"
+    @echo "     fpath=(~/.zfunc \$fpath)"
     @echo "     autoload -Uz compinit && compinit"

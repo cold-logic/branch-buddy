@@ -49,6 +49,9 @@ _branch-buddy() {
             branch__buddy,set-base)
                 cmd="branch__buddy__subcmd__set__subcmd__base"
                 ;;
+            branch__buddy,status)
+                cmd="branch__buddy__subcmd__status"
+                ;;
             branch__buddy,tree)
                 cmd="branch__buddy__subcmd__tree"
                 ;;
@@ -85,6 +88,9 @@ _branch-buddy() {
             branch__buddy__subcmd__help,set-base)
                 cmd="branch__buddy__subcmd__help__subcmd__set__subcmd__base"
                 ;;
+            branch__buddy__subcmd__help,status)
+                cmd="branch__buddy__subcmd__help__subcmd__status"
+                ;;
             branch__buddy__subcmd__help,tree)
                 cmd="branch__buddy__subcmd__help__subcmd__tree"
                 ;;
@@ -95,7 +101,7 @@ _branch-buddy() {
 
     case "${cmd}" in
         branch__buddy)
-            opts="-h --config --help new get-base set-base has-base guess-base tree install-hooks doctor log init completions help"
+            opts="-h --config --help new get-base set-base has-base guess-base tree install-hooks doctor log init completions status help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -207,7 +213,7 @@ _branch-buddy() {
             return 0
             ;;
         branch__subcmd__buddy__subcmd__help)
-            opts="new get-base set-base has-base guess-base tree install-hooks doctor log init completions help"
+            opts="new get-base set-base has-base guess-base tree install-hooks doctor log init completions status help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -374,6 +380,20 @@ _branch-buddy() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        branch__subcmd__buddy__subcmd__help__subcmd__status)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         branch__subcmd__buddy__subcmd__help__subcmd__tree)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
@@ -482,6 +502,24 @@ _branch-buddy() {
             ;;
         branch__subcmd__buddy__subcmd__set__subcmd__base)
             opts="-h --no-validate --config --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --config)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        branch__subcmd__buddy__subcmd__status)
+            opts="-h --json --config --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0

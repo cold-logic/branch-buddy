@@ -32,6 +32,7 @@ set edit:completion:arg-completer[branch-buddy] = {|@words|
             cand log 'Show focused commit log between branch and base (or stack)'
             cand init 'Scaffold a new .branchbuddy.toml configuration file'
             cand completions 'Generate shell completion scripts'
+            cand status 'Show branch health report (base, ahead/behind, staleness, diff stat)'
             cand help 'Print this message or the help of the given subcommand(s)'
         }
         &'branch-buddy;new'= {
@@ -111,6 +112,12 @@ set edit:completion:arg-completer[branch-buddy] = {|@words|
             cand -h 'Print help'
             cand --help 'Print help'
         }
+        &'branch-buddy;status'= {
+            cand --config 'Path to custom configuration file'
+            cand --json 'Emit JSON instead of human-readable output'
+            cand -h 'Print help'
+            cand --help 'Print help'
+        }
         &'branch-buddy;help'= {
             cand new 'Create a new branch with a slugified name and set its base'
             cand get-base 'Get the base branch for the specified branch (or current branch)'
@@ -123,6 +130,7 @@ set edit:completion:arg-completer[branch-buddy] = {|@words|
             cand log 'Show focused commit log between branch and base (or stack)'
             cand init 'Scaffold a new .branchbuddy.toml configuration file'
             cand completions 'Generate shell completion scripts'
+            cand status 'Show branch health report (base, ahead/behind, staleness, diff stat)'
             cand help 'Print this message or the help of the given subcommand(s)'
         }
         &'branch-buddy;help;new'= {
@@ -146,6 +154,8 @@ set edit:completion:arg-completer[branch-buddy] = {|@words|
         &'branch-buddy;help;init'= {
         }
         &'branch-buddy;help;completions'= {
+        }
+        &'branch-buddy;help;status'= {
         }
         &'branch-buddy;help;help'= {
         }

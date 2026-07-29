@@ -35,6 +35,7 @@ Register-ArgumentCompleter -Native -CommandName 'branch-buddy' -ScriptBlock {
             [CompletionResult]::new('log', 'log', [CompletionResultType]::ParameterValue, 'Show focused commit log between branch and base (or stack)')
             [CompletionResult]::new('init', 'init', [CompletionResultType]::ParameterValue, 'Scaffold a new .branchbuddy.toml configuration file')
             [CompletionResult]::new('completions', 'completions', [CompletionResultType]::ParameterValue, 'Generate shell completion scripts')
+            [CompletionResult]::new('status', 'status', [CompletionResultType]::ParameterValue, 'Show branch health report (base, ahead/behind, staleness, diff stat)')
             [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
             break
         }
@@ -126,6 +127,13 @@ Register-ArgumentCompleter -Native -CommandName 'branch-buddy' -ScriptBlock {
             [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
             break
         }
+        'branch-buddy;status' {
+            [CompletionResult]::new('--config', '--config', [CompletionResultType]::ParameterName, 'Path to custom configuration file')
+            [CompletionResult]::new('--json', '--json', [CompletionResultType]::ParameterName, 'Emit JSON instead of human-readable output')
+            [CompletionResult]::new('-h', '-h', [CompletionResultType]::ParameterName, 'Print help')
+            [CompletionResult]::new('--help', '--help', [CompletionResultType]::ParameterName, 'Print help')
+            break
+        }
         'branch-buddy;help' {
             [CompletionResult]::new('new', 'new', [CompletionResultType]::ParameterValue, 'Create a new branch with a slugified name and set its base')
             [CompletionResult]::new('get-base', 'get-base', [CompletionResultType]::ParameterValue, 'Get the base branch for the specified branch (or current branch)')
@@ -138,6 +146,7 @@ Register-ArgumentCompleter -Native -CommandName 'branch-buddy' -ScriptBlock {
             [CompletionResult]::new('log', 'log', [CompletionResultType]::ParameterValue, 'Show focused commit log between branch and base (or stack)')
             [CompletionResult]::new('init', 'init', [CompletionResultType]::ParameterValue, 'Scaffold a new .branchbuddy.toml configuration file')
             [CompletionResult]::new('completions', 'completions', [CompletionResultType]::ParameterValue, 'Generate shell completion scripts')
+            [CompletionResult]::new('status', 'status', [CompletionResultType]::ParameterValue, 'Show branch health report (base, ahead/behind, staleness, diff stat)')
             [CompletionResult]::new('help', 'help', [CompletionResultType]::ParameterValue, 'Print this message or the help of the given subcommand(s)')
             break
         }
@@ -172,6 +181,9 @@ Register-ArgumentCompleter -Native -CommandName 'branch-buddy' -ScriptBlock {
             break
         }
         'branch-buddy;help;completions' {
+            break
+        }
+        'branch-buddy;help;status' {
             break
         }
         'branch-buddy;help;help' {
